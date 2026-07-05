@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyBatis Log Viewer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>MyBatis Log Viewer</h1>
+    <p id="meta">読み込み中...</p>
+    <div id="parse-warning" class="parse-warning" hidden>
+      <p id="parse-warning-text"></p>
+      <ul id="parse-warning-samples" class="parse-warning-samples"></ul>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button type="button" id="tab-search" class="tab active">SQL 検索</button>
+    <button type="button" id="tab-stats" class="tab">統計</button>
+  </nav>
+
+  <section class="source-dir">
+    <label>
+      ログディレクトリ
+      <div class="dir-input">
+        <input id="log-dir" placeholder="例: C:\logs\app">
+        <button id="browse" type="button">参照...</button>
+        <button id="load-dir" type="button">読み込み</button>
+      </div>
+    </label>
+    <p id="file-list" class="file-list"></p>
+  </section>
+
+  <div id="panel-search">
+    <section class="filters">
+      <div class="filters-toolbar">
+        <span class="filters-toolbar-label">検索条件</span>
+        <button type="button" id="regex-samples" class="chip">正規表現サンプル</button>
+      </div>
+      <label>
+        Mapper (正規表現)
+        <input id="mapper" placeholder="UserMapper">
+      </label>
+      <label>
+        SQL 種別
+        <input id="sql-type" placeholder="SELECT,INSERT,UPDATE">
+      </label>
+      <label>
+        SQL (正規表現)
+        <input id="sql" placeholder="FROM users">
+      </label>
+      <label>
+        パラメータ (正規表現)
+        <input id="parameters" placeholder="Long">
+      </label>
+      <label>
+        スレッド (正規表現)
+        <input id="thread" placeholder="exec-1">
+      </label>
+      <label>
+        最小 elapsed (ms)
+        <input id="min-elapsed" type="number" min="0" placeholder="0">
+      </label>
+      <label>
+        最大 elapsed (ms)
+        <input id="max-elapsed" type="number" min="0" placeholder="">
+      </label>
+      <div class="datetime-filter">
+        <span class="field-label">期間</span>
+        <div class="datetime-range">
+          <div class="datetime-point">
+            <span class="point-label">開始</span>
+            <div class="datetime-inputs">
+              <input id="since-date" type="date" aria-label="開始日">
+              <input id="since-time" type="time" step="60" aria-label="開始時刻">
+            </div>
+          </div>
+          <div class="datetime-point">
+            <span class="point-label">終了</span>
+            <div class="datetime-inputs">
+              <input id="until-date" type="date" aria-label="終了日">
+              <input id="until-time" type="time" step="60" aria-label="終了時刻">
+            </div>
+          </div>
+        </div>
+        <div class="datetime-actions">
+          <button type="button" id="range-first-1h" class="chip" disabled>先頭1時間</button>
+          <button type="button" id="range-first-24h" class="chip" disabled>先頭24時間</button>
+          <button type="button" id="range-last-1h" class="chip" disabled>末尾1時間</button>
+          <button type="button" id="range-last-24h" class="chip" disabled>末尾24時間</button>
+          <button type="button" id="range-clear" class="chip">クリア</button>
+        </div>
+        <p id="range-hint" class="range-hint"></p>
+      </div>
+      <label>
+        全文検索 (grep)
+        <input id="grep" placeholder="INSERT INTO">
+      </label>
+      <label>
+        ソースファイル (正規表現)
+        <input id="source" placeholder="application.log">
+      </label>
+      <label>
+        表示件数
+        <input id="page-limit" type="number" min="1" max="5000" step="1" value="200">
+      </label>
+      <button id="search">検索</button>
+      <button id="reset" type="button">リセット</button>
+    </section>
+
+    <section class="toolbar">
+      <span id="result-count"></span>
+      <div class="pager">
+        <button id="prev" disabled>前へ</button>
+        <span id="page-info"></span>
+        <button id="next" disabled>次へ</button>
+      </div>
+    </section>
+
+    <div class="table-container">
+      <div id="loading-overlay" class="loading-overlay" hidden role="status" aria-live="polite">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <p id="loading-text">読み込み中...</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>時刻</th>
+              <th>Mapper</th>
+              <th>種別</th>
+              <th>SQL</th>
+              <th>elapsed</th>
+              <th>件数</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-stats" hidden>
+    <section class="stats-summary" id="stats-summary">
+      <p class="stats-loading">統計を読み込み中...</p>
+    </section>
+    <section class="stats-section">
+      <h2>SQL 種別別件数</h2>
+      <div id="stats-by-type" class="stats-bars"></div>
+    </section>
+    <section class="stats-section">
+      <h2>Mapper 別 TOP 20</h2>
+      <table class="stats-table">
+        <thead>
+          <tr>
+            <th>Mapper</th>
+            <th>実行回数</th>
+            <th>平均 elapsed</th>
+            <th>最大 elapsed</th>
+          </tr>
+        </thead>
+        <tbody id="stats-mappers"></tbody>
+      </table>
+    </section>
+    <section class="stats-section">
+      <h2>遅い SQL TOP 20</h2>
+      <table class="stats-table">
+        <thead>
+          <tr>
+            <th>時刻</th>
+            <th>elapsed</th>
+            <th>Mapper</th>
+            <th>種別</th>
+            <th>SQL</th>
+          </tr>
+        </thead>
+        <tbody id="stats-slow"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <dialog id="browse-dialog">
+    <form method="dialog" class="browse-form">
+      <h2>ディレクトリを選択</h2>
+      <p id="browse-current" class="browse-current"></p>
+      <ul id="browse-list" class="browse-list"></ul>
+      <div class="browse-actions">
+        <button id="browse-up" type="button">上へ</button>
+        <button id="browse-select" type="button" value="select">このディレクトリを選択</button>
+        <button type="submit" value="cancel">キャンセル</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detail">
+    <form method="dialog" class="detail-form">
+      <div id="detail-meta" class="detail-meta"></div>
+      <pre id="detail-body"></pre>
+      <div class="detail-actions">
+        <button type="submit">閉じる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="regex-samples-dialog">
+    <form method="dialog" class="regex-samples-form">
+      <h2>正規表現サンプル</h2>
+      <p class="regex-samples-note">各フィールドは正規表現（大文字小文字無視）に対応しています。</p>
+      <table class="regex-samples-table">
+        <thead>
+          <tr><th>パターン</th><th>説明</th><th>マッチ例</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>UserMapper</code></td><td>Mapper 名の部分一致</td><td>com.example.mapper.UserMapper.selectById</td></tr>
+          <tr><td><code>FROM users</code></td><td>SQL 部分一致</td><td>SELECT id FROM users WHERE ...</td></tr>
+          <tr><td><code>Long\)</code></td><td>パラメータ型</td><td>1(Long)</td></tr>
+          <tr><td><code>INSERT|UPDATE</code></td><td>OR 条件</td><td>INSERT / UPDATE</td></tr>
+        </tbody>
+      </table>
+      <button type="submit">閉じる</button>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/stats.js"></script>
+</body>
+</html>

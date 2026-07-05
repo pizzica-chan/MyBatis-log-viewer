@@ -1,0 +1,14 @@
+# Maven
+mlv-java/target/
+
+# SQLite インデックス（ローカルキャッシュ）
+tmp/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+Desktop.ini

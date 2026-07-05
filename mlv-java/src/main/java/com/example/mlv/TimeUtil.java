@@ -1,0 +1,137 @@
+package com.example.mlv;
+
+public final class TimeUtil {
+
+    private TimeUtil() {
+    }
+
+    private static final long MILLIS_PER_DAY = 86_400_000L;
+
+    public static long parseLogTimestamp(byte[] buf, int off) {
+        int year = digit4(buf, off);
+        int month = digit2(buf, off + 5);
+        int day = digit2(buf, off + 8);
+        int hour = digit2(buf, off + 11);
+        int min = digit2(buf, off + 14);
+        int sec = digit2(buf, off + 17);
+        int milli = digit3(buf, off + 20);
+        if (year < 0 || month < 0 || day < 0 || hour < 0 || min < 0 || sec < 0 || milli < 0) {
+            return Long.MIN_VALUE;
+        }
+        return toMillis(year, month, day, hour, min, sec, milli);
+    }
+
+    public static long parseUiDatetime(String value) {
+        String v = value.trim().replace('T', ' ');
+        try {
+            int year = Integer.parseInt(v.substring(0, 4));
+            int month = Integer.parseInt(v.substring(5, 7));
+            int day = Integer.parseInt(v.substring(8, 10));
+            int hour = 0;
+            int min = 0;
+            int sec = 0;
+            int milli = 0;
+            if (v.length() >= 16) {
+                hour = Integer.parseInt(v.substring(11, 13));
+                min = Integer.parseInt(v.substring(14, 16));
+            }
+            if (v.length() >= 19) {
+                sec = Integer.parseInt(v.substring(17, 19));
+            }
+            if (v.length() >= 23 && v.charAt(19) == '.') {
+                milli = Integer.parseInt(v.substring(20, 23));
+            }
+            return toMillis(year, month, day, hour, min, sec, milli);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("日時形式を解釈できません: " + value);
+        }
+    }
+
+    public static String formatIso(long millis) {
+        long days = Math.floorDiv(millis, MILLIS_PER_DAY);
+        int msOfDay = (int) Math.floorMod(millis, MILLIS_PER_DAY);
+        int[] ymd = civilFromDays(days);
+        int hour = msOfDay / 3_600_000;
+        int rem = msOfDay % 3_600_000;
+        int min = rem / 60_000;
+        rem %= 60_000;
+        int sec = rem / 1000;
+        int milli = rem % 1000;
+        StringBuilder sb = new StringBuilder(23);
+        pad(sb, ymd[0], 4);
+        sb.append('-');
+        pad(sb, ymd[1], 2);
+        sb.append('-');
+        pad(sb, ymd[2], 2);
+        sb.append('T');
+        pad(sb, hour, 2);
+        sb.append(':');
+        pad(sb, min, 2);
+        sb.append(':');
+        pad(sb, sec, 2);
+        sb.append('.');
+        pad(sb, milli, 3);
+        return sb.toString();
+    }
+
+    static long toMillis(int year, int month, int day, int hour, int min, int sec, int milli) {
+        long days = daysFromCivil(year, month, day);
+        return days * MILLIS_PER_DAY + (hour * 3600L + min * 60L + sec) * 1000L + milli;
+    }
+
+    static long daysFromCivil(int y, int m, int d) {
+        int yy = m <= 2 ? y - 1 : y;
+        int era = (yy >= 0 ? yy : yy - 399) / 400;
+        int yoe = yy - era * 400;
+        int doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+        int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return (long) era * 146_097 + doe - 719_468;
+    }
+
+    static int[] civilFromDays(long z) {
+        z += 719_468;
+        long era = (z >= 0 ? z : z - 146_096) / 146_097;
+        long doe = z - era * 146_097;
+        long yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        long y = yoe + era * 400;
+        long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        long mp = (5 * doy + 2) / 153;
+        long d = doy - (153 * mp + 2) / 5 + 1;
+        long m = mp < 10 ? mp + 3 : mp - 9;
+        return new int[] {(int) (m <= 2 ? y + 1 : y), (int) m, (int) d};
+    }
+
+    private static void pad(StringBuilder sb, int value, int width) {
+        String s = Integer.toString(value);
+        for (int i = s.length(); i < width; i++) {
+            sb.append('0');
+        }
+        sb.append(s);
+    }
+
+    private static int digit(byte[] b, int i) {
+        int c = b[i] & 0xFF;
+        return (c >= '0' && c <= '9') ? c - '0' : -1;
+    }
+
+    private static int digit2(byte[] b, int i) {
+        int a = digit(b, i);
+        int c = digit(b, i + 1);
+        return (a < 0 || c < 0) ? -1 : a * 10 + c;
+    }
+
+    private static int digit3(byte[] b, int i) {
+        int a = digit(b, i);
+        int c = digit(b, i + 1);
+        int d = digit(b, i + 2);
+        return (a < 0 || c < 0 || d < 0) ? -1 : a * 100 + c * 10 + d;
+    }
+
+    private static int digit4(byte[] b, int i) {
+        int a = digit(b, i);
+        int c = digit(b, i + 1);
+        int d = digit(b, i + 2);
+        int e = digit(b, i + 3);
+        return (a < 0 || c < 0 || d < 0 || e < 0) ? -1 : a * 1000 + c * 100 + d * 10 + e;
+    }
+}
