@@ -34,11 +34,23 @@ public final class MyBatisBlockParser {
         public Integer rowCount;
         public String sqlType;
         public Integer elapsedMs;
+        public boolean complete;
+        /** raw 表示に含める最終バイト位置（排他）。 */
+        public long rawEndOffset;
+        /** 次の Preparing 行開始位置（排他上限）。 */
+        public long rawEndCap = Long.MAX_VALUE;
+        /** 直後のスタックトレース行を raw に含める。 */
+        public boolean captureTail;
         public StringBuilder bodyBuf;
     }
 
     public static boolean isPreparingLine(LogParser.ParsedLine line) {
         return line != null && PREPARING.matcher(line.message).find();
+    }
+
+    /** 同一スレッド・同一 mapper の進行中ブロックを識別するキー。 */
+    public static String blockKey(String thread, String mapper) {
+        return thread + '\0' + mapper;
     }
 
     public static boolean isBlockContinuation(LogParser.ParsedLine line, String mapper, String thread) {
@@ -77,7 +89,25 @@ public final class MyBatisBlockParser {
         block.thread = line.thread;
         block.sqlText = extractPreparingSql(line.message);
         block.sqlType = detectSqlType(block.sqlText);
+        block.complete = false;
+        block.rawEndOffset = byteOffset;
         return block;
+    }
+
+    /** 行を raw 範囲に含めたことを記録する。 */
+    public static void noteRawLineEnd(SqlBlock block, long lineEndOffset) {
+        if (block != null && lineEndOffset > block.rawEndOffset) {
+            block.rawEndOffset = lineEndOffset;
+        }
+    }
+
+    /** 未完了ブロックの raw 上限を次の Preparing 行手前に設定する。 */
+    public static void capIncompleteBlocksAt(java.util.Collection<SqlBlock> blocks, long preparingStart) {
+        for (SqlBlock block : blocks) {
+            if (!block.complete && block.byteOffset < preparingStart && preparingStart < block.rawEndCap) {
+                block.rawEndCap = preparingStart;
+            }
+        }
     }
 
     /** 継続行の情報をブロックにマージする。 */
@@ -95,11 +125,25 @@ public final class MyBatisBlockParser {
         if (um.find()) {
             block.rowCount = Integer.valueOf(um.group(1));
         }
+        if (isBlockEnd(line)) {
+            block.complete = true;
+        }
     }
 
-    /** ブロック終了時に elapsed_ms を確定する。 */
+    /** ブロック終了時に elapsed_ms と raw 範囲を確定する。 */
     public static void finalizeBlock(SqlBlock block, long endByteOffset) {
-        block.endByteOffset = endByteOffset;
+        if (!block.complete) {
+            long end = endByteOffset;
+            if (block.rawEndOffset > block.byteOffset) {
+                end = block.rawEndOffset;
+            }
+            if (block.rawEndCap < end) {
+                end = block.rawEndCap;
+            }
+            block.endByteOffset = end;
+        } else {
+            block.endByteOffset = endByteOffset;
+        }
         if (block.tsEndMillis >= block.tsMillis) {
             long elapsed = block.tsEndMillis - block.tsMillis;
             block.elapsedMs = elapsed > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) elapsed;

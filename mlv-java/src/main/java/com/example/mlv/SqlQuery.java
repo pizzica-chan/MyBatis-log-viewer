@@ -64,6 +64,18 @@ public final class SqlQuery {
             sql.append(" AND e.elapsed_ms <= ?");
             params.add(filter.maxElapsed);
         }
+        if (filter.minRowCount != null) {
+            sql.append(" AND e.row_count >= ?");
+            params.add(filter.minRowCount);
+        }
+        if (filter.maxRowCount != null) {
+            sql.append(" AND e.row_count <= ?");
+            params.add(filter.maxRowCount);
+        }
+        if (filter.complete != null) {
+            sql.append(" AND e.complete = ?");
+            params.add(filter.complete ? 1 : 0);
+        }
         if (filter.grepRe != null && filter.grepText != null
                 && isPlainLiteral(filter.grepText) && SqlLogIndex.ftsAvailable(conn)) {
             sql.append(" AND e.id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)");
@@ -143,6 +155,15 @@ public final class SqlQuery {
             return false;
         }
         if (f.maxElapsed != null && (e.elapsedMs == null || e.elapsedMs > f.maxElapsed)) {
+            return false;
+        }
+        if (f.minRowCount != null && (e.rowCount == null || e.rowCount < f.minRowCount)) {
+            return false;
+        }
+        if (f.maxRowCount != null && (e.rowCount == null || e.rowCount > f.maxRowCount)) {
+            return false;
+        }
+        if (f.complete != null && e.complete != f.complete) {
             return false;
         }
         if (f.sourceRe != null && !f.sourceRe.matcher(e.source).find()) {

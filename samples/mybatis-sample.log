@@ -14,6 +14,9 @@
 2026-06-15 00:19:15.400[http-nio-8080-exec-5][DEBUG][com.example.mapper.UserMapper.deleteById] - ==>  Preparing: DELETE FROM users WHERE id = ?
 2026-06-15 00:19:15.401[http-nio-8080-exec-5][DEBUG][com.example.mapper.UserMapper.deleteById] - ==> Parameters: 99(Long)
 2026-06-15 00:19:15.403[http-nio-8080-exec-5][DEBUG][com.example.mapper.UserMapper.deleteById] - <==    Updates: 0
+2026-06-15 00:19:16.100[http-nio-8080-exec-6][DEBUG][com.example.mapper.UserMapper.selectMissing] - ==>  Preparing: SELECT * FROM missing_table WHERE id = ?
+2026-06-15 00:19:16.101[http-nio-8080-exec-6][DEBUG][com.example.mapper.UserMapper.selectMissing] - ==> Parameters: 1(Long)
+2026-06-15 00:19:16.150[http-nio-8080-exec-6][ERROR][com.example.mapper.UserMapper.selectMissing] - org.springframework.jdbc.BadSqlGrammarException: bad SQL grammar [SELECT * FROM missing_table WHERE id = ?]
 2026-06-15 00:19:16.500[http-nio-8080-exec-6][ERROR][com.example.web.UserController] - 処理失敗
 java.lang.RuntimeException: boom
 	at com.example.web.UserController.process(UserController.java:42)
@@ -21,3 +24,9 @@ java.lang.RuntimeException: boom
 2026-06-15 00:19:17.600[http-nio-8080-exec-7][DEBUG][com.example.mapper.ReportMapper.heavyQuery] - ==>  Preparing: SELECT u.id, u.name, COUNT(o.id) FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.id, u.name
 2026-06-15 00:19:17.601[http-nio-8080-exec-7][DEBUG][com.example.mapper.ReportMapper.heavyQuery] - ==> Parameters: 
 2026-06-15 00:19:17.650[http-nio-8080-exec-7][DEBUG][com.example.mapper.ReportMapper.heavyQuery] - <==      Total: 150
+2026-06-15 00:19:18.000[http-nio-8080-exec-1][DEBUG][com.example.mapper.UserMapper.selectById] - ==>  Preparing: SELECT id FROM users WHERE id = ?
+2026-06-15 00:19:18.010[http-nio-8080-exec-2][DEBUG][com.example.mapper.OrderMapper.selectByUserId] - ==>  Preparing: SELECT * FROM orders WHERE user_id = ?
+2026-06-15 00:19:18.011[http-nio-8080-exec-2][DEBUG][com.example.mapper.OrderMapper.selectByUserId] - ==> Parameters: 2(Long)
+2026-06-15 00:19:18.015[http-nio-8080-exec-2][DEBUG][com.example.mapper.OrderMapper.selectByUserId] - <==      Total: 1
+2026-06-15 00:19:18.012[http-nio-8080-exec-1][DEBUG][com.example.mapper.UserMapper.selectById] - ==> Parameters: 2(Long)
+2026-06-15 00:19:18.020[http-nio-8080-exec-1][DEBUG][com.example.mapper.UserMapper.selectById] - <==      Total: 1

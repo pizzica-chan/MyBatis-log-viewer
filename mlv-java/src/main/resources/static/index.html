@@ -60,12 +60,28 @@
         <input id="thread" placeholder="exec-1">
       </label>
       <label>
+        状態
+        <select id="complete">
+          <option value="">すべて</option>
+          <option value="1">完了（Total/Updates あり）</option>
+          <option value="0">未完了（失敗・中断など）</option>
+        </select>
+      </label>
+      <label>
         最小 elapsed (ms)
         <input id="min-elapsed" type="number" min="0" placeholder="0">
       </label>
       <label>
         最大 elapsed (ms)
         <input id="max-elapsed" type="number" min="0" placeholder="">
+      </label>
+      <label>
+        最小件数 (Total/Updates)
+        <input id="min-row-count" type="number" min="0" placeholder="0">
+      </label>
+      <label>
+        最大件数 (Total/Updates)
+        <input id="max-row-count" type="number" min="0" placeholder="">
       </label>
       <div class="datetime-filter">
         <span class="field-label">期間</span>
@@ -129,9 +145,11 @@
           <thead>
             <tr>
               <th>時刻</th>
+              <th>スレッド</th>
               <th>Mapper</th>
               <th>種別</th>
-              <th>SQL</th>
+              <th>状態</th>
+              <th>SQL（バインド）</th>
               <th>elapsed</th>
               <th>件数</th>
               <th>Source</th>
@@ -200,6 +218,9 @@
       <div id="detail-meta" class="detail-meta"></div>
       <pre id="detail-body"></pre>
       <div class="detail-actions">
+        <button type="button" id="detail-search-around-1m" class="detail-search-around-btn">前後1分間の SQL を検索</button>
+        <button type="button" id="detail-search-around-5m" class="detail-search-around-btn">前後5分間の SQL を検索</button>
+        <button type="button" id="detail-filter-same-context" class="detail-search-around-btn">同一ソース・同一スレッドで絞込み</button>
         <button type="submit">閉じる</button>
       </div>
     </form>

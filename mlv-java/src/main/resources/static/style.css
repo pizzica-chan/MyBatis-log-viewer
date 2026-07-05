@@ -204,11 +204,17 @@ th {
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: rgba(88, 166, 255, 0.08); }
 
-td.sql, td.mapper, td.source {
+td.sql, td.mapper, td.source, td.thread {
   max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+td.thread {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.85rem;
+  max-width: 160px;
 }
 
 td.source {
@@ -220,6 +226,14 @@ td.source {
 .sql-type-insert { color: var(--accent); }
 .sql-type-update { color: var(--warn); }
 .sql-type-delete { color: var(--err); }
+
+.status-complete { color: var(--ok); font-weight: 600; }
+.status-incomplete { color: var(--err); font-weight: 600; }
+tr.row-incomplete { background: rgba(255, 80, 80, 0.06); }
+tr.row-same-thread-group td.thread,
+tr.row-same-thread-group td.source {
+  border-left: 3px solid var(--accent);
+}
 
 .stats-summary {
   display: grid;
@@ -281,6 +295,34 @@ dialog pre {
 .detail-meta dt { color: var(--muted); display: inline; }
 .detail-meta dd { display: inline; margin: 0 1rem 0 0.25rem; }
 
+.bind-warning {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--warn);
+  font-size: 0.8125rem;
+}
+
+pre.sql-block {
+  margin: 0.25rem 0 1rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.8125rem;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+pre.sql-bound {
+  border-color: var(--ok);
+}
+
 .browse-form h2, .regex-samples-form h2 { margin: 0 0 0.75rem; font-size: 1rem; }
 .browse-current { margin: 0 0 0.75rem; font-family: Consolas, monospace; font-size: 0.8125rem; word-break: break-all; }
 .browse-list { list-style: none; margin: 0 0 1rem; padding: 0; max-height: 40vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
@@ -289,6 +331,23 @@ dialog pre {
 .browse-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .browse-actions button { background: var(--panel); color: var(--text); }
 #browse-select { background: var(--accent); color: #fff; }
+
+.detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.detail-actions button[type="submit"] {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.detail-search-around-btn {
+  background: var(--accent);
+  color: #fff;
+}
 
 @media (prefers-color-scheme: light) {
   :root {

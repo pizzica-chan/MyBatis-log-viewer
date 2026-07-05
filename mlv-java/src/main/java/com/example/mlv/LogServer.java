@@ -456,6 +456,9 @@ public final class LogServer {
             filter.grepText = (grep != null && !grep.isEmpty()) ? grep : null;
             filter.minElapsed = SqlQueryFilter.parseIntOrNull(p.get("min_elapsed"));
             filter.maxElapsed = SqlQueryFilter.parseIntOrNull(p.get("max_elapsed"));
+            filter.minRowCount = SqlQueryFilter.parseIntOrNull(p.get("min_row_count"));
+            filter.maxRowCount = SqlQueryFilter.parseIntOrNull(p.get("max_row_count"));
+            filter.complete = SqlQueryFilter.parseCompleteFilter(p.get("complete"));
         } catch (RuntimeException e) {
             sendErrorJson(ex, 400, "正規表現が不正です: " + e.getMessage());
             return;
@@ -509,6 +512,7 @@ public final class LogServer {
         o.addProperty("sql_type", e.sqlType);
         o.addProperty("sql", e.sqlText);
         o.addProperty("parameters", e.parameters);
+        addBoundSqlFields(o, e.sqlText, e.parameters);
         if (e.rowCount != null) {
             o.addProperty("row_count", e.rowCount);
         }
@@ -517,9 +521,26 @@ public final class LogServer {
         }
         o.addProperty("thread", e.thread);
         o.addProperty("level", e.level);
+        o.addProperty("complete", e.complete);
         o.addProperty("source", e.source);
         o.addProperty("line_no", e.lineNo);
         return o;
+    }
+
+    private static void addBoundSqlFields(JsonObject o, String sqlText, String parameters) {
+        SqlParameterBinder.BindResult bound = SqlParameterBinder.bind(sqlText, parameters);
+        if (bound.sql != null && !bound.sql.equals(sqlText)) {
+            o.addProperty("bound_sql", bound.sql);
+            String preview = SqlParameterBinder.bindPreview(sqlText, parameters, 80);
+            if (preview != null) {
+                o.addProperty("bound_sql_preview", preview);
+            }
+        } else if (bound.sql != null) {
+            o.addProperty("bound_sql", bound.sql);
+        }
+        if (bound.warning != null) {
+            o.addProperty("bind_warning", bound.warning);
+        }
     }
 
     private void handleDetail(HttpExchange ex) throws IOException {
@@ -583,6 +604,7 @@ public final class LogServer {
         o.addProperty("sql_type", entry.sqlType);
         o.addProperty("sql", entry.sqlText);
         o.addProperty("parameters", entry.parameters);
+        addBoundSqlFields(o, entry.sqlText, entry.parameters);
         if (entry.rowCount != null) {
             o.addProperty("row_count", entry.rowCount);
         }
@@ -590,6 +612,7 @@ public final class LogServer {
             o.addProperty("elapsed_ms", entry.elapsedMs);
         }
         o.addProperty("thread", entry.thread);
+        o.addProperty("complete", entry.complete);
         o.addProperty("raw", raw);
         sendJson(ex, 200, o);
     }

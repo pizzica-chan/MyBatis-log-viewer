@@ -14,7 +14,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -67,6 +69,7 @@ public final class SqlLogIndex {
         public Integer elapsedMs;
         public String thread;
         public String level;
+        public boolean complete;
         public String source;
     }
 
@@ -107,12 +110,31 @@ public final class SqlLogIndex {
                     + "ts_millis INTEGER NOT NULL, ts_end_millis INTEGER, "
                     + "mapper TEXT NOT NULL, sql_type TEXT NOT NULL, sql_text TEXT NOT NULL, "
                     + "parameters TEXT, row_count INTEGER, elapsed_ms INTEGER, "
-                    + "thread TEXT NOT NULL, level TEXT NOT NULL)");
+                    + "thread TEXT NOT NULL, level TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 1)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_ts ON entries(ts_millis, file_id, line_no)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_mapper ON entries(mapper)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_sql_type ON entries(sql_type)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_elapsed ON entries(elapsed_ms)");
+            ensureEntriesColumns(st);
         }
+    }
+
+    /** 既存 DB 向けに列を追加（スキーマ拡張）。 */
+    private static void ensureEntriesColumns(Statement st) throws SQLException {
+        if (!columnExists(st, "entries", "complete")) {
+            st.execute("ALTER TABLE entries ADD COLUMN complete INTEGER NOT NULL DEFAULT 1");
+        }
+    }
+
+    private static boolean columnExists(Statement st, String table, String column) throws SQLException {
+        try (ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString("name"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static final String FTS_SCHEMA =
@@ -175,7 +197,7 @@ public final class SqlLogIndex {
     }
 
     private static String indexFingerprint(List<Path> paths, boolean enableFts) throws IOException {
-        return fileFingerprint(paths) + "\nfts:" + (enableFts ? "1" : "0");
+        return fileFingerprint(paths) + "\nfts:" + (enableFts ? "1" : "0") + "\nschema:4";
     }
 
     public static void clearIndex(Connection conn) throws SQLException {
@@ -272,6 +294,7 @@ public final class SqlLogIndex {
         Integer elapsedMs;
         String thread;
         String level;
+        boolean complete;
         StringBuilder bodyBuf;
     }
 
@@ -360,8 +383,8 @@ public final class SqlLogIndex {
         try (PreparedStatement ins = conn.prepareStatement(
                 "INSERT INTO entries (id, file_id, line_no, byte_offset, end_byte_offset, "
                         + "ts_millis, ts_end_millis, mapper, sql_type, sql_text, parameters, "
-                        + "row_count, elapsed_ms, thread, level) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                        + "row_count, elapsed_ms, thread, level, complete) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
              PreparedStatement ftsIns = hasFts ? conn.prepareStatement(
                 "INSERT INTO entries_fts (rowid, body) VALUES (?, ?)") : null) {
             while (true) {
@@ -401,6 +424,7 @@ public final class SqlLogIndex {
                     }
                     ins.setString(14, r.thread);
                     ins.setString(15, r.level);
+                    ins.setInt(16, r.complete ? 1 : 0);
                     ins.addBatch();
                     if (ftsIns != null) {
                         ftsIns.setLong(1, id);
@@ -598,7 +622,7 @@ public final class SqlLogIndex {
              InputStream in = new BufferedInputStream(raw, 1 << 16);
              ByteLineReader reader = new ByteLineReader(in)) {
             long lineNo = 0;
-            SqlBlock pending = null;
+            Map<String, SqlBlock> pendingBlocks = new LinkedHashMap<>();
             List<Row> batch = new ArrayList<>(BATCH_SIZE);
 
             while (reader.next()) {
@@ -611,31 +635,56 @@ public final class SqlLogIndex {
                         header ? LogParser.parse(reader.lineBuf, reader.lineLen) : null;
 
                 if (parsed != null && MyBatisBlockParser.isPreparingLine(parsed)) {
-                    if (pending != null) {
-                        batch = flushBlock(pending, reader.lineStart, batch, queue, collectBody);
-                        pending = null;
+                    MyBatisBlockParser.capIncompleteBlocksAt(pendingBlocks.values(), reader.lineStart);
+                    String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
+                    SqlBlock existing = pendingBlocks.remove(key);
+                    if (existing != null) {
+                        batch = flushBlock(existing, reader.lineStart, batch, queue, collectBody);
                     }
-                    pending = MyBatisBlockParser.startBlock(fileId, lineNo, reader.lineStart, parsed);
+                    SqlBlock block = MyBatisBlockParser.startBlock(fileId, lineNo, reader.lineStart, parsed);
+                    MyBatisBlockParser.noteRawLineEnd(block, reader.position());
                     if (collectBody) {
-                        pending.bodyBuf = new StringBuilder();
-                        pending.bodyBuf.append(new String(
+                        block.bodyBuf = new StringBuilder();
+                        block.bodyBuf.append(new String(
                                 reader.lineBuf, 0, reader.lineLen, StandardCharsets.UTF_8));
                     }
-                } else if (pending != null && parsed != null
-                        && MyBatisBlockParser.isBlockContinuation(parsed, pending.mapper, pending.thread)) {
-                    MyBatisBlockParser.mergeLine(pending, parsed);
-                    if (collectBody && pending.bodyBuf != null) {
-                        pending.bodyBuf.append(new String(
-                                reader.lineBuf, 0, reader.lineLen, StandardCharsets.UTF_8));
+                    pendingBlocks.put(key, block);
+                } else if (parsed != null) {
+                    String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
+                    SqlBlock pending = pendingBlocks.get(key);
+                    if (pending != null
+                            && MyBatisBlockParser.isBlockContinuation(parsed, pending.mapper, pending.thread)) {
+                        MyBatisBlockParser.mergeLine(pending, parsed);
+                        MyBatisBlockParser.noteRawLineEnd(pending, reader.position());
+                        pending.captureTail = false;
+                        if (collectBody && pending.bodyBuf != null) {
+                            pending.bodyBuf.append(new String(
+                                    reader.lineBuf, 0, reader.lineLen, StandardCharsets.UTF_8));
+                        }
+                        if (MyBatisBlockParser.isBlockEnd(parsed)) {
+                            pendingBlocks.remove(key);
+                            batch = flushBlock(pending, reader.position(), batch, queue, collectBody);
+                        }
+                    } else {
+                        for (SqlBlock open : pendingBlocks.values()) {
+                            if (parsed.thread.equals(open.thread)) {
+                                MyBatisBlockParser.noteRawLineEnd(open, reader.position());
+                                open.captureTail = true;
+                            } else {
+                                open.captureTail = false;
+                            }
+                        }
                     }
-                    if (MyBatisBlockParser.isBlockEnd(parsed)) {
-                        batch = flushBlock(pending, reader.position(), batch, queue, collectBody);
-                        pending = null;
+                } else if (!header) {
+                    for (SqlBlock open : pendingBlocks.values()) {
+                        if (open.captureTail) {
+                            MyBatisBlockParser.noteRawLineEnd(open, reader.position());
+                        }
                     }
-                } else if (pending != null && parsed != null) {
-                    batch = flushBlock(pending, reader.lineStart, batch, queue, collectBody);
-                    pending = null;
-                } else if (parsed == null && header) {
+                } else if (header) {
+                    for (SqlBlock open : pendingBlocks.values()) {
+                        open.captureTail = false;
+                    }
                     skippedCounter.incrementAndGet();
                     if (skippedSamples.size() < MAX_SKIPPED_SAMPLES) {
                         skippedSamples.add(new SkippedLine(fileId, lineNo,
@@ -644,7 +693,7 @@ public final class SqlLogIndex {
                 }
             }
 
-            if (pending != null) {
+            for (SqlBlock pending : pendingBlocks.values()) {
                 batch = flushBlock(pending, reader.position(), batch, queue, collectBody);
             }
             if (!batch.isEmpty()) {
@@ -684,6 +733,7 @@ public final class SqlLogIndex {
         row.elapsedMs = block.elapsedMs;
         row.thread = block.thread;
         row.level = block.level;
+        row.complete = block.complete;
         return row;
     }
 
@@ -740,7 +790,7 @@ public final class SqlLogIndex {
     private static final String SELECT_BASE =
             "SELECT e.id, e.file_id, e.line_no, e.byte_offset, e.end_byte_offset, "
                     + "e.ts_millis, e.ts_end_millis, e.mapper, e.sql_type, e.sql_text, "
-                    + "e.parameters, e.row_count, e.elapsed_ms, e.thread, e.level, f.path "
+                    + "e.parameters, e.row_count, e.elapsed_ms, e.thread, e.level, e.complete, f.path "
                     + "FROM entries e JOIN files f ON e.file_id = f.id ";
 
     static EntryRow rowFrom(ResultSet rs) throws SQLException {
@@ -762,7 +812,8 @@ public final class SqlLogIndex {
         e.elapsedMs = rs.wasNull() ? null : em;
         e.thread = rs.getString(14);
         e.level = rs.getString(15);
-        e.source = rs.getString(16);
+        e.complete = rs.getInt(16) != 0;
+        e.source = rs.getString(17);
         return e;
     }
 

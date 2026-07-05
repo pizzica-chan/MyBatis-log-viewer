@@ -5,6 +5,10 @@ let lastTotal = 0;
 let browsePath = "";
 let metaRange = { first: null, last: null };
 let exactQueryRange = null;
+/** 詳細ダイアログ表示中の SQL 時刻（ISO）。 */
+let detailTimestamp = null;
+/** 詳細ダイアログ表示中の Source / スレッド。 */
+let detailContext = null;
 
 const els = {
   meta: document.getElementById("meta"),
@@ -20,8 +24,11 @@ const els = {
   sql: document.getElementById("sql"),
   parameters: document.getElementById("parameters"),
   thread: document.getElementById("thread"),
+  complete: document.getElementById("complete"),
   minElapsed: document.getElementById("min-elapsed"),
   maxElapsed: document.getElementById("max-elapsed"),
+  minRowCount: document.getElementById("min-row-count"),
+  maxRowCount: document.getElementById("max-row-count"),
   sinceDate: document.getElementById("since-date"),
   sinceTime: document.getElementById("since-time"),
   untilDate: document.getElementById("until-date"),
@@ -45,6 +52,9 @@ const els = {
   detail: document.getElementById("detail"),
   detailMeta: document.getElementById("detail-meta"),
   detailBody: document.getElementById("detail-body"),
+  detailSearchAround1m: document.getElementById("detail-search-around-1m"),
+  detailSearchAround5m: document.getElementById("detail-search-around-5m"),
+  detailFilterSameContext: document.getElementById("detail-filter-same-context"),
   regexSamples: document.getElementById("regex-samples"),
   regexSamplesDialog: document.getElementById("regex-samples-dialog"),
   browseDialog: document.getElementById("browse-dialog"),
@@ -127,6 +137,14 @@ function setDatetimeFields(start, end) {
   els.untilTime.value = end.time;
 }
 
+function setExactQueryRange(sinceMs, untilMs) {
+  exactQueryRange = {
+    since: msJstToApiDatetime(sinceMs),
+    until: msJstToApiDatetime(untilMs),
+  };
+  setDatetimeFields(msJstToFields(sinceMs), msJstToFields(untilMs));
+}
+
 function clearDatetimeFields() {
   els.sinceDate.value = "";
   els.sinceTime.value = "";
@@ -196,6 +214,9 @@ function buildQuery() {
   }
   if (els.minElapsed.value.trim()) params.set("min_elapsed", els.minElapsed.value.trim());
   if (els.maxElapsed.value.trim()) params.set("max_elapsed", els.maxElapsed.value.trim());
+  if (els.minRowCount.value.trim()) params.set("min_row_count", els.minRowCount.value.trim());
+  if (els.maxRowCount.value.trim()) params.set("max_row_count", els.maxRowCount.value.trim());
+  if (els.complete.value) params.set("complete", els.complete.value);
   if (exactQueryRange) {
     params.set("since", exactQueryRange.since);
     params.set("until", exactQueryRange.until);
@@ -366,15 +387,52 @@ function truncate(s, len) {
   return s.length > len ? s.substring(0, len - 3) + "..." : s;
 }
 
+function formatCompleteStatus(complete) {
+  return complete ? "完了" : "未完了";
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatThreadLabel(thread) {
+  if (!thread) return "-";
+  return thread;
+}
+
 function renderRows(items) {
   els.rows.innerHTML = "";
+  let prevKey = null;
   for (const item of items) {
     const tr = document.createElement("tr");
+    if (item.complete === false) tr.classList.add("row-incomplete");
+    const groupKey = (item.source || "") + "\0" + (item.thread || "");
+    if (groupKey !== "\0" && groupKey === prevKey) {
+      tr.classList.add("row-same-thread-group");
+    }
+    prevKey = groupKey;
     tr.addEventListener("click", () => showDetail(item));
     addCell(tr, item.timestamp);
+    addCell(tr, formatThreadLabel(item.thread), {
+      className: "thread",
+      title: item.thread
+        ? "スレッド: " + item.thread + "\n同一 Source・同一スレッドの連続行は、同一 Java メソッド内の SQL の可能性があります"
+        : "",
+    });
     addCell(tr, item.mapper, { className: "mapper", title: item.mapper });
     addCell(tr, item.sql_type, { className: sqlTypeClass(item.sql_type) });
-    addCell(tr, truncate(item.sql, 80), { className: "sql", title: item.sql });
+    addCell(tr, formatCompleteStatus(item.complete !== false), {
+      className: item.complete === false ? "status-incomplete" : "status-complete",
+      title: item.complete === false
+        ? "Total/Updates 行に到達していません（SQL失敗・中断などの可能性）"
+        : "Total/Updates まで正常終了",
+    });
+    const boundPreview = item.bound_sql_preview || item.bound_sql;
+    const sqlPreview = boundPreview || truncate(item.sql, 80);
+    const sqlTitle = item.bound_sql
+      ? "バインド済み:\n" + item.bound_sql + (item.sql !== item.bound_sql ? "\n\nPrepared:\n" + item.sql : "")
+      : item.sql;
+    addCell(tr, truncate(sqlPreview, 80), { className: "sql", title: sqlTitle });
     addCell(tr, item.elapsed_ms != null ? item.elapsed_ms + " ms" : "-");
     addCell(tr, item.row_count != null ? String(item.row_count) : "-");
     addCell(tr, item.source, { className: "source", title: item.source });
@@ -414,14 +472,43 @@ async function showDetail(item) {
   els.detailMeta.innerHTML =
     `<dl>` +
     `<dt>Mapper:</dt><dd>${escapeHtml(data.mapper)}</dd>` +
+    `<dt>スレッド:</dt><dd class="thread">${escapeHtml(data.thread || "-")}</dd>` +
+    `<dt>Source:</dt><dd class="source">${escapeHtml(data.source || "-")}</dd>` +
     `<dt>種別:</dt><dd>${escapeHtml(data.sql_type)}</dd>` +
+    `<dt>状態:</dt><dd class="${data.complete === false ? "status-incomplete" : "status-complete"}">${escapeHtml(formatCompleteStatus(data.complete !== false))}</dd>` +
     `<dt>elapsed:</dt><dd>${data.elapsed_ms != null ? data.elapsed_ms + " ms" : "-"}</dd>` +
     `<dt>件数:</dt><dd>${data.row_count != null ? data.row_count : "-"}</dd>` +
     `<dt>Parameters:</dt><dd>${escapeHtml(data.parameters || "-")}</dd>` +
     `</dl>` +
-    `<p><strong>SQL:</strong></p><pre>${escapeHtml(data.sql || "")}</pre>`;
+    (data.bind_warning ? `<p class="bind-warning">${escapeHtml(data.bind_warning)}</p>` : "") +
+    `<p><strong>Prepared SQL:</strong></p><pre class="sql-block">${escapeHtml(data.sql || "")}</pre>` +
+    (data.bound_sql ? `<p><strong>バインド済み SQL:</strong></p><pre class="sql-block sql-bound">${escapeHtml(data.bound_sql)}</pre>` : "");
   els.detailBody.textContent = data.raw || "";
+  detailTimestamp = data.timestamp;
+  detailContext = { source: data.source || "", thread: data.thread || "" };
   els.detail.showModal();
+}
+
+function filterBySameSourceAndThreadFromDetail() {
+  if (!detailContext || !detailContext.source || !detailContext.thread) return;
+  switchTab("search");
+  els.source.value = escapeRegex(detailContext.source);
+  els.thread.value = escapeRegex(detailContext.thread);
+  offset = 0;
+  els.detail.close();
+  loadSql();
+}
+
+function searchAroundFromDetail(minutes) {
+  if (!detailTimestamp) return;
+  const centerMs = isoToMsJst(detailTimestamp);
+  if (centerMs == null) return;
+  const delta = minutes * 60 * 1000;
+  switchTab("search");
+  setExactQueryRange(centerMs - delta, centerMs + delta);
+  offset = 0;
+  els.detail.close();
+  loadSql();
 }
 
 function escapeHtml(s) {
@@ -472,8 +559,11 @@ function resetFilters() {
   els.sql.value = "";
   els.parameters.value = "";
   els.thread.value = "";
+  els.complete.value = "";
   els.minElapsed.value = "";
   els.maxElapsed.value = "";
+  els.minRowCount.value = "";
+  els.maxRowCount.value = "";
   els.grep.value = "";
   els.source.value = "";
   clearDatetimeFields();
@@ -497,6 +587,11 @@ window.applySearchFilter = function (filter) {
   if (filter.sqlType != null) els.sqlType.value = filter.sqlType;
   if (filter.sql != null) els.sql.value = filter.sql;
   if (filter.minElapsed != null) els.minElapsed.value = filter.minElapsed;
+  if (filter.minRowCount != null) els.minRowCount.value = filter.minRowCount;
+  if (filter.maxRowCount != null) els.maxRowCount.value = filter.maxRowCount;
+  if (filter.source != null) els.source.value = filter.source;
+  if (filter.thread != null) els.thread.value = filter.thread;
+  if (filter.complete != null) els.complete.value = filter.complete ? "1" : "0";
   offset = 0;
   loadSql();
 };
@@ -530,6 +625,9 @@ els.next.addEventListener("click", () => {
   loadSql();
 });
 els.regexSamples.addEventListener("click", () => els.regexSamplesDialog.showModal());
+els.detailSearchAround1m.addEventListener("click", () => searchAroundFromDetail(1));
+els.detailSearchAround5m.addEventListener("click", () => searchAroundFromDetail(5));
+els.detailFilterSameContext.addEventListener("click", () => filterBySameSourceAndThreadFromDetail());
 
 els.rangeFirst1h.addEventListener("click", () => applyFirstHours(1));
 els.rangeFirst24h.addEventListener("click", () => applyFirstHours(24));

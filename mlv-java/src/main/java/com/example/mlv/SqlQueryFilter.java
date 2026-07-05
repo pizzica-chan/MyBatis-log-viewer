@@ -18,6 +18,10 @@ public final class SqlQueryFilter {
     public Long untilMillis;
     public Integer minElapsed;
     public Integer maxElapsed;
+    public Integer minRowCount;
+    public Integer maxRowCount;
+    /** null=すべて, true=Total/Updates まで到達, false=未到達（失敗・中断など） */
+    public Boolean complete;
 
     public boolean needsRaw() {
         return grepRe != null;
@@ -49,5 +53,20 @@ public final class SqlQueryFilter {
             return null;
         }
         return Integer.valueOf(s.trim());
+    }
+
+    /** {@code 1}/{@code true}=完了のみ, {@code 0}/{@code false}=未完了のみ, それ以外/null=すべて。 */
+    public static Boolean parseCompleteFilter(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+        String v = value.trim().toLowerCase();
+        if ("1".equals(v) || "true".equals(v) || "yes".equals(v) || "complete".equals(v)) {
+            return Boolean.TRUE;
+        }
+        if ("0".equals(v) || "false".equals(v) || "no".equals(v) || "incomplete".equals(v)) {
+            return Boolean.FALSE;
+        }
+        return null;
     }
 }
