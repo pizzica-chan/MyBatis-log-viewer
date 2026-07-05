@@ -221,7 +221,7 @@ class SqlLogIndexParseTest {
             assertTrue(raw.contains("UserController.process"));
 
             assertFalse(raw.contains("ReportMapper.heavyQuery"));
-            assertFalse(raw.contains("00:19:18.000"));
+            assertFalse(raw.contains("16:45:18.000"));
             assertFalse(raw.contains("OrderMapper.selectByUserId"));
             assertFalse(raw.contains("Total: 150"));
         }
@@ -242,7 +242,7 @@ class SqlLogIndexParseTest {
             assertTrue(raw.contains("BadSqlGrammarException"));
             assertTrue(raw.contains("処理失敗"));
             assertFalse(raw.contains("ReportMapper.heavyQuery"));
-            assertFalse(raw.contains("00:19:18.000"));
+            assertFalse(raw.contains("16:45:18.000"));
         }
     }
 
