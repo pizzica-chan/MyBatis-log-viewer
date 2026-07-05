@@ -45,7 +45,7 @@
       </label>
       <label>
         SQL 種別
-        <input id="sql-type" placeholder="SELECT,INSERT,UPDATE">
+        <input id="sql-type" placeholder="SELECT,INSERT,UPDATE" title="カンマ区切りで完全一致（正規表現不可）">
       </label>
       <label>
         SQL (正規表現)
@@ -111,7 +111,7 @@
         <p id="range-hint" class="range-hint"></p>
       </div>
       <label>
-        全文検索 (grep)
+        全文検索 (grep・正規表現)
         <input id="grep" placeholder="INSERT INTO">
       </label>
       <label>
@@ -229,7 +229,12 @@
   <dialog id="regex-samples-dialog">
     <form method="dialog" class="regex-samples-form">
       <h2>正規表現サンプル</h2>
-      <p class="regex-samples-note">各フィールドは正規表現（大文字小文字無視）に対応しています。</p>
+      <p class="regex-samples-note">
+        正規表現（大文字小文字無視）に対応しているのは
+        <strong>Mapper・SQL・パラメータ・スレッド・全文検索 (grep)・ソースファイル</strong>
+        の各フィールドのみです。
+        SQL 種別・状態・elapsed・件数・期間は正規表現ではなく、それぞれ列挙・数値・日時として扱われます。
+      </p>
       <table class="regex-samples-table">
         <thead>
           <tr><th>パターン</th><th>説明</th><th>マッチ例</th></tr>
@@ -238,7 +243,9 @@
           <tr><td><code>UserMapper</code></td><td>Mapper 名の部分一致</td><td>com.example.mapper.UserMapper.selectById</td></tr>
           <tr><td><code>FROM users</code></td><td>SQL 部分一致</td><td>SELECT id FROM users WHERE ...</td></tr>
           <tr><td><code>Long\)</code></td><td>パラメータ型</td><td>1(Long)</td></tr>
-          <tr><td><code>INSERT|UPDATE</code></td><td>OR 条件</td><td>INSERT / UPDATE</td></tr>
+          <tr><td><code>INSERT|UPDATE</code></td><td>SQL 等での OR 条件</td><td>INSERT ... / UPDATE ...</td></tr>
+          <tr><td><code>exec-1</code></td><td>スレッド名の部分一致</td><td>http-nio-8080-exec-1</td></tr>
+          <tr><td><code>mybatis.*\.log</code></td><td>ソースファイルパス</td><td>samples\mybatis-sample.log</td></tr>
         </tbody>
       </table>
       <button type="submit">閉じる</button>
