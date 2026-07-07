@@ -46,6 +46,7 @@ const els = {
   reset: document.getElementById("reset"),
   rows: document.getElementById("rows"),
   resultCount: document.getElementById("result-count"),
+  highlight: document.getElementById("highlight"),
   pageInfo: document.getElementById("page-info"),
   prev: document.getElementById("prev"),
   next: document.getElementById("next"),
@@ -303,6 +304,47 @@ function buildQuery() {
 }
 
 let loadPollTimer = null;
+let lastPageItems = [];
+
+function getHighlightNeedle() {
+  const text = els.highlight.value.trim();
+  return text ? text.toLowerCase() : "";
+}
+
+/** ハイライト判定。grep と同様に MyBatis ブロック全文（raw）を優先する（検索結果は変えない）。 */
+function rowMatchesHighlight(item, needle) {
+  if (!needle) return false;
+  const haystack = item.raw || [
+    item.timestamp,
+    item.thread,
+    item.mapper,
+    item.sql_type,
+    item.sql,
+    item.bound_sql,
+    item.bound_sql_preview,
+    item.parameters,
+    item.elapsed_ms != null ? item.elapsed_ms + " ms" : "",
+    item.row_count,
+    item.level,
+    item.complete === false ? "未完了" : "完了",
+    item.bind_warning,
+    item.source,
+    item.line_no,
+  ].filter((v) => v != null && v !== "").join(" ");
+  return haystack.toLowerCase().includes(needle);
+}
+
+function applyRowHighlights() {
+  const needle = getHighlightNeedle();
+  const rows = els.rows.querySelectorAll("tr");
+  for (let i = 0; i < rows.length; i += 1) {
+    const item = lastPageItems[i];
+    rows[i].classList.toggle(
+      "row-highlight",
+      Boolean(item && rowMatchesHighlight(item, needle))
+    );
+  }
+}
 
 function clearLoadPoll() {
   if (loadPollTimer) {
@@ -441,7 +483,9 @@ async function loadSql() {
       return;
     }
     lastTotal = data.total;
+    lastPageItems = data.items;
     renderRows(data.items);
+    applyRowHighlights();
     updatePager(data.offset, data.limit, data.total);
   } finally {
     popLoading();
@@ -477,6 +521,10 @@ function formatThreadLabel(thread) {
 
 function renderRows(items) {
   els.rows.innerHTML = "";
+  if (!items || items.length === 0) {
+    lastPageItems = [];
+    return;
+  }
   let prevKey = null;
   for (const item of items) {
     const tr = document.createElement("tr");
@@ -696,6 +744,7 @@ els.next.addEventListener("click", () => {
   loadSql();
 });
 els.regexSamples.addEventListener("click", () => els.regexSamplesDialog.showModal());
+els.highlight.addEventListener("input", applyRowHighlights);
 els.detailSearchAround1m.addEventListener("click", () => searchAroundFromDetail(1));
 els.detailSearchAround5m.addEventListener("click", () => searchAroundFromDetail(5));
 els.detailFilterSameContext.addEventListener("click", () => filterBySameSourceAndThreadFromDetail());
@@ -714,6 +763,10 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.tagName === "INPUT") {
     if (e.target === els.logDir) {
       loadDirectory();
+      return;
+    }
+    if (e.target === els.highlight) {
+      applyRowHighlights();
       return;
     }
     if (

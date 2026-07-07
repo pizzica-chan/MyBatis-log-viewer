@@ -127,7 +127,13 @@
     </section>
 
     <section class="toolbar">
-      <span id="result-count"></span>
+      <div class="toolbar-left">
+        <span id="result-count"></span>
+        <label class="highlight-input">
+          マッチ行をハイライト
+          <input id="highlight" placeholder="含む文字列（表示のみ）">
+        </label>
+      </div>
       <div class="pager">
         <button id="prev" disabled>前へ</button>
         <span id="page-info"></span>
@@ -242,6 +248,7 @@
         <tbody>
           <tr><td><code>UserMapper</code></td><td>Mapper 名の部分一致</td><td>com.example.mapper.UserMapper.selectById</td></tr>
           <tr><td><code>FROM users</code></td><td>SQL 部分一致</td><td>SELECT id FROM users WHERE ...</td></tr>
+          <tr><td><code>^(?!.*DELETE).*$</code></td><td>指定文字列を含まない（否定先読み）</td><td>SELECT ...（DELETE を含まない SQL）</td></tr>
           <tr><td><code>Long\)</code></td><td>パラメータ型</td><td>1(Long)</td></tr>
           <tr><td><code>INSERT|UPDATE</code></td><td>SQL 等での OR 条件</td><td>INSERT ... / UPDATE ...</td></tr>
           <tr><td><code>exec-1</code></td><td>スレッド名の部分一致</td><td>http-nio-8080-exec-1</td></tr>

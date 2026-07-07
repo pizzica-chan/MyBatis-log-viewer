@@ -155,6 +155,27 @@ button {
   gap: 1rem;
 }
 
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.highlight-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.highlight-input input {
+  width: 12rem;
+  min-width: 0;
+}
+
 .pager { display: flex; align-items: center; gap: 0.5rem; }
 .pager button { background: var(--panel); color: var(--text); }
 
@@ -204,6 +225,14 @@ th {
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: rgba(88, 166, 255, 0.08); }
 
+tbody tr.row-highlight {
+  background: rgba(210, 153, 34, 0.16);
+}
+
+tbody tr.row-highlight:hover {
+  background: rgba(210, 153, 34, 0.26);
+}
+
 td.sql, td.mapper, td.source, td.thread {
   max-width: 280px;
   overflow: hidden;
@@ -230,6 +259,8 @@ td.source {
 .status-complete { color: var(--ok); font-weight: 600; }
 .status-incomplete { color: var(--err); font-weight: 600; }
 tr.row-incomplete { background: rgba(255, 80, 80, 0.06); }
+tr.row-incomplete.row-highlight { background: rgba(210, 153, 34, 0.20); }
+tr.row-incomplete.row-highlight:hover { background: rgba(210, 153, 34, 0.30); }
 tr.row-same-thread-group td.thread,
 tr.row-same-thread-group td.source {
   border-left: 3px solid var(--accent);

@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -498,14 +499,25 @@ public final class LogServer {
         payload.addProperty("offset", offset);
         payload.addProperty("limit", limit);
         JsonArray items = new JsonArray();
-        for (EntryRow e : result.page) {
-            items.add(rowJson(e));
+        Map<String, RandomAccessFile> rawHandles = new HashMap<>();
+        try {
+            for (EntryRow e : result.page) {
+                items.add(rowJson(e, readPageRaw(rawHandles, e)));
+            }
+        } finally {
+            for (RandomAccessFile f : rawHandles.values()) {
+                try {
+                    f.close();
+                } catch (IOException ignored) {
+                    // クローズ失敗は無視
+                }
+            }
         }
         payload.add("items", items);
         sendJson(ex, 200, payload);
     }
 
-    private JsonObject rowJson(EntryRow e) {
+    private JsonObject rowJson(EntryRow e, String raw) {
         JsonObject o = new JsonObject();
         o.addProperty("timestamp", TimeUtil.formatIso(e.tsMillis));
         o.addProperty("mapper", e.mapper);
@@ -524,7 +536,29 @@ public final class LogServer {
         o.addProperty("complete", e.complete);
         o.addProperty("source", e.source);
         o.addProperty("line_no", e.lineNo);
+        o.addProperty("raw", raw);
         return o;
+    }
+
+    /** 一覧表示用。MyBatis ブロック全文（Preparing/Parameters/Total 行含む）を読み出す。 */
+    private static String readPageRaw(Map<String, RandomAccessFile> handles, EntryRow e) {
+        try {
+            RandomAccessFile file = handles.get(e.source);
+            if (file == null) {
+                file = new RandomAccessFile(e.source, "r");
+                handles.put(e.source, file);
+            }
+            file.seek(e.byteOffset);
+            long size = e.endByteOffset > e.byteOffset ? e.endByteOffset - e.byteOffset : 0;
+            if (size <= 0) {
+                return "";
+            }
+            byte[] buf = new byte[(int) Math.min(size, Integer.MAX_VALUE)];
+            file.readFully(buf);
+            return new String(buf, StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            return "";
+        }
     }
 
     private static void addBoundSqlFields(JsonObject o, String sqlText, String parameters) {
