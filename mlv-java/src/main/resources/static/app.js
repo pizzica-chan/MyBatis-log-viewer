@@ -541,7 +541,7 @@ function renderRows(items) {
     }
     prevKey = groupKey;
     tr.addEventListener("click", () => showDetail(item));
-    addCell(tr, item.timestamp);
+    addCell(tr, item.timestamp, { className: "col-timestamp" });
     addCell(tr, formatThreadLabel(item.thread), {
       className: "thread",
       title: item.thread
