@@ -519,6 +519,12 @@ function formatThreadLabel(thread) {
   return thread;
 }
 
+function formatMapperLabel(mapper) {
+  if (!mapper) return "-";
+  const parts = mapper.split(".");
+  return parts.length > 2 ? parts.slice(-2).join(".") : mapper;
+}
+
 function renderRows(items) {
   els.rows.innerHTML = "";
   if (!items || items.length === 0) {
@@ -542,10 +548,10 @@ function renderRows(items) {
         ? "スレッド: " + item.thread + "\n同一 Source・同一スレッドの連続行は、同一 Java メソッド内の SQL の可能性があります"
         : "",
     });
-    addCell(tr, item.mapper, { className: "mapper", title: item.mapper });
+    addCell(tr, formatMapperLabel(item.mapper), { className: "mapper", title: item.mapper });
     addCell(tr, item.sql_type, { className: sqlTypeClass(item.sql_type) });
     addCell(tr, formatCompleteStatus(item.complete !== false), {
-      className: item.complete === false ? "status-incomplete" : "status-complete",
+      className: (item.complete === false ? "status-incomplete" : "status-complete") + " col-status",
       title: item.complete === false
         ? "Total/Updates 行に到達していません（SQL失敗・中断などの可能性）"
         : "Total/Updates まで正常終了",

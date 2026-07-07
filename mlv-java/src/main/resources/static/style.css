@@ -258,6 +258,8 @@ td.source {
 
 .status-complete { color: var(--ok); font-weight: 600; }
 .status-incomplete { color: var(--err); font-weight: 600; }
+th.col-status,
+td.col-status { white-space: nowrap; }
 tr.row-incomplete { background: rgba(255, 80, 80, 0.06); }
 tr.row-incomplete.row-highlight { background: rgba(210, 153, 34, 0.20); }
 tr.row-incomplete.row-highlight:hover { background: rgba(210, 153, 34, 0.30); }
