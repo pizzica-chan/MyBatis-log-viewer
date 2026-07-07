@@ -697,11 +697,18 @@ public final class LogServer {
         if (!checkReady(ex)) {
             return;
         }
-        int limit = parseIntParam(queryParams(ex).get("limit"), 20);
+        String q = queryParams(ex).get("q");
+        if (q == null || q.trim().length() < 2) {
+            sendErrorJson(ex, 400, "検索文字列 q は2文字以上指定してください");
+            return;
+        }
         try {
             List<MapperStat> list;
+            List<SlowSql> slowList;
             synchronized (dbLock) {
-                list = SqlStats.topMappers(conn, limit);
+                String trimmed = q.trim();
+                list = SqlStats.searchMappers(conn, trimmed);
+                slowList = SqlStats.searchSlowSql(conn, trimmed, 20);
             }
             JsonArray arr = new JsonArray();
             for (MapperStat m : list) {
@@ -718,6 +725,7 @@ public final class LogServer {
             }
             JsonObject payload = new JsonObject();
             payload.add("items", arr);
+            payload.add("slow_sql", slowSqlToJsonArray(slowList));
             sendJson(ex, 200, payload);
         } catch (Exception e) {
             sendErrorJson(ex, 500, e.getMessage());
@@ -734,25 +742,29 @@ public final class LogServer {
             synchronized (dbLock) {
                 list = SqlStats.slowSql(conn, limit);
             }
-            JsonArray arr = new JsonArray();
-            for (SlowSql s : list) {
-                JsonObject o = new JsonObject();
-                o.addProperty("id", s.id);
-                o.addProperty("timestamp", s.timestamp);
-                o.addProperty("mapper", s.mapper);
-                o.addProperty("sql_type", s.sqlType);
-                o.addProperty("sql_preview", s.sqlPreview);
-                o.addProperty("elapsed_ms", s.elapsedMs);
-                o.addProperty("source", s.source);
-                o.addProperty("line_no", s.lineNo);
-                arr.add(o);
-            }
             JsonObject payload = new JsonObject();
-            payload.add("items", arr);
+            payload.add("items", slowSqlToJsonArray(list));
             sendJson(ex, 200, payload);
         } catch (Exception e) {
             sendErrorJson(ex, 500, e.getMessage());
         }
+    }
+
+    private JsonArray slowSqlToJsonArray(List<SlowSql> list) {
+        JsonArray arr = new JsonArray();
+        for (SlowSql s : list) {
+            JsonObject o = new JsonObject();
+            o.addProperty("id", s.id);
+            o.addProperty("timestamp", s.timestamp);
+            o.addProperty("mapper", s.mapper);
+            o.addProperty("sql_type", s.sqlType);
+            o.addProperty("sql_preview", s.sqlPreview);
+            o.addProperty("elapsed_ms", s.elapsedMs);
+            o.addProperty("source", s.source);
+            o.addProperty("line_no", s.lineNo);
+            arr.add(o);
+        }
+        return arr;
     }
 
     private boolean checkReady(HttpExchange ex) throws IOException {

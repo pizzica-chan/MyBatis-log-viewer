@@ -1,25 +1,26 @@
 const statsEls = {
   summary: document.getElementById("stats-summary"),
   byType: document.getElementById("stats-by-type"),
+  mapperSearch: document.getElementById("stats-mapper-search"),
+  mapperSearchBtn: document.getElementById("stats-mapper-search-btn"),
+  mapperSearchHint: document.getElementById("stats-mapper-search-hint"),
   mappers: document.getElementById("stats-mappers"),
+  slowHint: document.getElementById("stats-slow-hint"),
   slow: document.getElementById("stats-slow"),
 };
+
+const MAPPER_SEARCH_MIN_LEN = 2;
+const SLOW_HINT_DEFAULT = "Mapper を検索すると表示されます";
 
 let statsLoaded = false;
 
 async function refreshStats() {
   statsEls.summary.innerHTML = '<p class="stats-loading">統計を読み込み中...</p>';
   try {
-    const [summaryRes, mappersRes, slowRes] = await Promise.all([
-      fetch("/api/stats/summary"),
-      fetch("/api/stats/mappers?limit=20"),
-      fetch("/api/stats/slow?limit=20"),
-    ]);
+    const summaryRes = await fetch("/api/stats/summary");
     const summary = await summaryRes.json();
-    const mappers = await mappersRes.json();
-    const slow = await slowRes.json();
 
-    if (summary.loading || mappers.loading || slow.loading) {
+    if (summary.loading) {
       statsEls.summary.innerHTML = '<p class="stats-loading">インデックス構築中...</p>';
       return;
     }
@@ -30,11 +31,61 @@ async function refreshStats() {
 
     renderSummary(summary);
     renderByType(summary.by_sql_type || []);
-    renderMappers(mappers.items || []);
-    renderSlow(slow.items || []);
+    clearMapperSearchResults();
     statsLoaded = true;
   } catch (e) {
     statsEls.summary.innerHTML = `<p class="stats-loading">統計の取得に失敗しました</p>`;
+  }
+}
+
+function clearMapperSearchResults() {
+  statsEls.mappers.innerHTML = "";
+  statsEls.slow.innerHTML = "";
+  statsEls.slowHint.textContent = SLOW_HINT_DEFAULT;
+}
+
+async function searchMapperStats() {
+  const q = statsEls.mapperSearch.value.trim();
+  if (q.length < MAPPER_SEARCH_MIN_LEN) {
+    statsEls.mapperSearchHint.textContent = `${MAPPER_SEARCH_MIN_LEN}文字以上入力してください`;
+    clearMapperSearchResults();
+    return;
+  }
+  statsEls.mapperSearchHint.textContent = "検索中...";
+  statsEls.slowHint.textContent = "検索中...";
+  statsEls.mappers.innerHTML = "";
+  statsEls.slow.innerHTML = "";
+  try {
+    const res = await fetch("/api/stats/mappers?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (data.loading) {
+      statsEls.mapperSearchHint.textContent = "インデックス構築中...";
+      statsEls.slowHint.textContent = SLOW_HINT_DEFAULT;
+      return;
+    }
+    if (!res.ok || data.error) {
+      statsEls.mapperSearchHint.textContent = data.error || "検索に失敗しました";
+      statsEls.slowHint.textContent = SLOW_HINT_DEFAULT;
+      return;
+    }
+    const items = data.items || [];
+    const slowItems = data.slow_sql || [];
+    if (items.length === 0) {
+      statsEls.mapperSearchHint.textContent = `「${q}」に一致する Mapper はありません`;
+      statsEls.slowHint.textContent = `「${q}」に一致する遅い SQL はありません`;
+      return;
+    }
+    statsEls.mapperSearchHint.textContent = `${items.length.toLocaleString()} 件の Mapper が見つかりました`;
+    renderMappers(items);
+    if (slowItems.length === 0) {
+      statsEls.slowHint.textContent = `「${q}」に一致する elapsed 付き SQL はありません`;
+    } else {
+      statsEls.slowHint.textContent = `${slowItems.length.toLocaleString()} 件の遅い SQL（検索条件内）`;
+    }
+    renderSlow(slowItems);
+  } catch (e) {
+    statsEls.mapperSearchHint.textContent = "検索に失敗しました";
+    statsEls.slowHint.textContent = SLOW_HINT_DEFAULT;
   }
 }
 
@@ -59,6 +110,20 @@ function formatShort(iso) {
   return p ? `${p[1]} ${p[2]}` : iso;
 }
 
+function confirmApplySearchFilter(filter, descriptionLines) {
+  const message = [
+    "SQL 検索タブに移動し、次の条件を設定します。",
+    "",
+    ...descriptionLines,
+    "",
+    "よろしいですか？",
+  ].join("\n");
+  if (!window.confirm(message)) {
+    return;
+  }
+  window.applySearchFilter(filter);
+}
+
 function renderByType(items) {
   statsEls.byType.innerHTML = "";
   if (items.length === 0) {
@@ -73,7 +138,10 @@ function renderByType(items) {
       `<div class="stats-bar-track"><div class="stats-bar-fill" style="width:${item.pct || 0}%"></div></div>` +
       `<span class="stats-bar-count">${item.count.toLocaleString()}</span>`;
     row.addEventListener("click", () => {
-      window.applySearchFilter({ sqlType: item.sql_type });
+      confirmApplySearchFilter(
+        { sqlType: item.sql_type },
+        [`SQL 種別: ${item.sql_type}`],
+      );
     });
     statsEls.byType.appendChild(row);
   }
@@ -89,7 +157,10 @@ function renderMappers(items) {
       `<td>${m.avg_elapsed != null ? Math.round(m.avg_elapsed) + " ms" : "-"}</td>` +
       `<td>${m.max_elapsed != null ? m.max_elapsed + " ms" : "-"}</td>`;
     tr.addEventListener("click", () => {
-      window.applySearchFilter({ mapper: escapeRegex(m.mapper) });
+      confirmApplySearchFilter(
+        { mapper: escapeRegex(m.mapper) },
+        [`Mapper: ${m.mapper}`],
+      );
     });
     statsEls.mappers.appendChild(tr);
   }
@@ -106,7 +177,10 @@ function renderSlow(items) {
       `<td>${s.sql_type}</td>` +
       `<td class="sql" title="${escapeAttr(s.sql_preview)}">${escapeHtml(s.sql_preview)}</td>`;
     tr.addEventListener("click", () => {
-      window.applySearchFilter({ mapper: escapeRegex(s.mapper), minElapsed: String(s.elapsed_ms) });
+      confirmApplySearchFilter(
+        { mapper: escapeRegex(s.mapper), minElapsed: String(s.elapsed_ms) },
+        [`Mapper: ${s.mapper}`, `最小 elapsed: ${s.elapsed_ms} ms`],
+      );
     });
     statsEls.slow.appendChild(tr);
   }
@@ -128,5 +202,10 @@ function escapeAttr(s) {
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+statsEls.mapperSearchBtn.addEventListener("click", searchMapperStats);
+statsEls.mapperSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") searchMapperStats();
+});
 
 window.refreshStats = refreshStats;

@@ -176,7 +176,15 @@
       <div id="stats-by-type" class="stats-bars"></div>
     </section>
     <section class="stats-section">
-      <h2>Mapper 別 TOP 20</h2>
+      <h2>Mapper 統計</h2>
+      <div class="stats-mapper-search">
+        <label>
+          Mapper（部分一致）
+          <input id="stats-mapper-search" type="search" placeholder="UserMapper" autocomplete="off">
+        </label>
+        <button type="button" id="stats-mapper-search-btn">検索</button>
+      </div>
+      <p id="stats-mapper-search-hint" class="stats-mapper-hint">Mapper 名の一部を入力して検索してください</p>
       <table class="stats-table">
         <thead>
           <tr>
@@ -188,9 +196,8 @@
         </thead>
         <tbody id="stats-mappers"></tbody>
       </table>
-    </section>
-    <section class="stats-section">
-      <h2>遅い SQL TOP 20</h2>
+      <h3 class="stats-subheading">遅い SQL TOP 20（検索条件内）</h3>
+      <p id="stats-slow-hint" class="stats-mapper-hint">Mapper を検索すると表示されます</p>
       <table class="stats-table">
         <thead>
           <tr>

@@ -300,6 +300,18 @@ tr.row-same-thread-group td.source {
 
 .stats-loading { color: var(--muted); padding: 1.25rem; margin: 0; }
 
+.stats-mapper-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.stats-mapper-search label { flex: 1; min-width: 12rem; margin: 0; }
+.stats-mapper-search input { width: 100%; }
+.stats-mapper-hint { font-size: 0.8125rem; color: var(--muted); margin: 0 0 0.75rem; }
+.stats-subheading { margin: 1.5rem 0 0.75rem; font-size: 0.9375rem; font-weight: 600; }
+
 dialog {
   width: min(900px, 95vw);
   border: 1px solid var(--border);
