@@ -115,7 +115,7 @@
         <input id="grep" placeholder="INSERT INTO">
       </label>
       <label>
-        ソースファイル (正規表現)
+        ログファイル (正規表現)
         <input id="source" placeholder="application.log">
       </label>
       <label>
@@ -158,7 +158,7 @@
               <th>SQL（バインド）</th>
               <th>elapsed</th>
               <th>件数</th>
-              <th>Source</th>
+              <th>ログファイル</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -233,7 +233,7 @@
       <div class="detail-actions">
         <button type="button" id="detail-search-around-1m" class="detail-search-around-btn">前後1分間の SQL を検索</button>
         <button type="button" id="detail-search-around-5m" class="detail-search-around-btn">前後5分間の SQL を検索</button>
-        <button type="button" id="detail-filter-same-context" class="detail-search-around-btn">同一ソース・同一スレッドで絞込み</button>
+        <button type="button" id="detail-filter-same-context" class="detail-search-around-btn">同一ログファイル・同一スレッドで絞込み</button>
         <button type="submit">閉じる</button>
       </div>
     </form>
@@ -244,7 +244,7 @@
       <h2>正規表現サンプル</h2>
       <p class="regex-samples-note">
         正規表現（大文字小文字無視）に対応しているのは
-        <strong>Mapper・SQL・パラメータ・スレッド・全文検索 (grep)・ソースファイル</strong>
+        <strong>Mapper・SQL・パラメータ・スレッド・全文検索 (grep)・ログファイル</strong>
         の各フィールドのみです。
         SQL 種別・状態・elapsed・件数・期間は正規表現ではなく、それぞれ列挙・数値・日時として扱われます。
       </p>
@@ -259,7 +259,7 @@
           <tr><td><code>Long\)</code></td><td>パラメータ型</td><td>1(Long)</td></tr>
           <tr><td><code>INSERT|UPDATE</code></td><td>SQL 等での OR 条件</td><td>INSERT ... / UPDATE ...</td></tr>
           <tr><td><code>exec-1</code></td><td>スレッド名の部分一致</td><td>http-nio-8080-exec-1</td></tr>
-          <tr><td><code>mybatis.*\.log</code></td><td>ソースファイルパス</td><td>samples\mybatis-sample.log</td></tr>
+          <tr><td><code>mybatis.*\.log</code></td><td>ログファイルパス</td><td>samples\mybatis-sample.log</td></tr>
         </tbody>
       </table>
       <button type="submit">閉じる</button>

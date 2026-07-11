@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.example.mlv.SqlLogIndex.EntryRow;
 
@@ -166,7 +167,7 @@ public final class SqlQuery {
         if (f.complete != null && e.complete != f.complete) {
             return false;
         }
-        if (f.sourceRe != null && !f.sourceRe.matcher(e.source).find()) {
+        if (f.sourceRe != null && !matchesSource(f.sourceRe, e.source)) {
             return false;
         }
         if (f.mapperRe != null && !f.mapperRe.matcher(e.mapper).find()) {
@@ -185,6 +186,18 @@ public final class SqlQuery {
             }
         }
         return true;
+    }
+
+    private static boolean matchesSource(Pattern sourceRe, String source) {
+        if (source == null) {
+            return false;
+        }
+        if (sourceRe.matcher(source).find()) {
+            return true;
+        }
+        String label = PathUtil.sourceListLabel(source);
+        return label != null && !"-".equals(label) && !label.equals(source)
+                && sourceRe.matcher(label).find();
     }
 
     private static boolean matchesGrep(SqlQueryFilter f, String raw) {

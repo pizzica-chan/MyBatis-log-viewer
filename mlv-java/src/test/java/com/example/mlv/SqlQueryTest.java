@@ -92,6 +92,37 @@ class SqlQueryTest {
         }
     }
 
+    @Test
+    void filterBySourceMatchesFullPathAndListLabel() throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            String source = SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 1).page.get(0).source;
+            String listLabel = PathUtil.sourceListLabel(source);
+            assertTrue(listLabel.contains("samples"));
+            assertTrue(listLabel.contains("mybatis-sample.log"));
+            assertNotEquals(source, listLabel);
+
+            assertEquals(9, queryBySource(conn, "samples").total);
+            assertEquals(9, queryBySource(conn, "mybatis-sample\\.log").total);
+
+            String[] segs = source.split("[/\\\\]");
+            if (segs.length > 2) {
+                String pathSegment = segs[segs.length - 3];
+                assertEquals(9, queryBySource(conn, pathSegment).total,
+                        "full path segment should match: " + pathSegment);
+            }
+        }
+    }
+
+    private static SqlQuery.Result queryBySource(Connection conn, String pattern) throws Exception {
+        SqlQueryFilter f = new SqlQueryFilter();
+        f.sourceRe = SqlQueryFilter.compileRegex(pattern);
+        return SqlQuery.querySql(conn, f, 0, 100);
+    }
+
     private static void assumeTrue(boolean condition, String message) {
         org.junit.jupiter.api.Assumptions.assumeTrue(condition, message);
     }

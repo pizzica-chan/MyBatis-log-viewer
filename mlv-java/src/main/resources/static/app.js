@@ -7,7 +7,7 @@ let metaRange = { first: null, last: null };
 let exactQueryRange = null;
 /** 詳細ダイアログ表示中の SQL 時刻（ISO）。 */
 let detailTimestamp = null;
-/** 詳細ダイアログ表示中の Source / スレッド。 */
+/** 詳細ダイアログ表示中のログファイル / スレッド。 */
 let detailContext = null;
 
 const els = {
@@ -525,6 +525,14 @@ function formatMapperLabel(mapper) {
   return parts.length > 2 ? parts.slice(-2).join(".") : mapper;
 }
 
+function formatSourceLabel(source) {
+  if (!source) return "-";
+  const parts = source.split(/[/\\]/).filter(Boolean);
+  if (parts.length <= 1) return parts[0] || source;
+  const sep = source.includes("\\") ? "\\" : "/";
+  return parts.slice(-2).join(sep);
+}
+
 function renderRows(items) {
   els.rows.innerHTML = "";
   if (!items || items.length === 0) {
@@ -545,7 +553,7 @@ function renderRows(items) {
     addCell(tr, formatThreadLabel(item.thread), {
       className: "thread",
       title: item.thread
-        ? "スレッド: " + item.thread + "\n同一 Source・同一スレッドの連続行は、同一 Java メソッド内の SQL の可能性があります"
+        ? "スレッド: " + item.thread + "\n同一ログファイル・同一スレッドの連続行は、同一 Java メソッド内の SQL の可能性があります"
         : "",
     });
     addCell(tr, formatMapperLabel(item.mapper), { className: "mapper", title: item.mapper });
@@ -564,7 +572,7 @@ function renderRows(items) {
     addCell(tr, truncate(sqlPreview, 80), { className: "sql", title: sqlTitle });
     addCell(tr, item.elapsed_ms != null ? item.elapsed_ms + " ms" : "-");
     addCell(tr, item.row_count != null ? String(item.row_count) : "-");
-    addCell(tr, item.source, { className: "source", title: item.source });
+    addCell(tr, formatSourceLabel(item.source), { className: "source", title: item.source });
     els.rows.appendChild(tr);
   }
 }
@@ -602,7 +610,7 @@ async function showDetail(item) {
     `<dl>` +
     `<dt>Mapper:</dt><dd>${escapeHtml(data.mapper)}</dd>` +
     `<dt>スレッド:</dt><dd class="thread">${escapeHtml(data.thread || "-")}</dd>` +
-    `<dt>Source:</dt><dd class="source">${escapeHtml(data.source || "-")}</dd>` +
+    `<dt>ログファイル:</dt><dd class="source">${escapeHtml(data.source || "-")}</dd>` +
     `<dt>種別:</dt><dd>${escapeHtml(data.sql_type)}</dd>` +
     `<dt>状態:</dt><dd class="${data.complete === false ? "status-incomplete" : "status-complete"}">${escapeHtml(formatCompleteStatus(data.complete !== false))}</dd>` +
     `<dt>elapsed:</dt><dd>${data.elapsed_ms != null ? data.elapsed_ms + " ms" : "-"}</dd>` +
