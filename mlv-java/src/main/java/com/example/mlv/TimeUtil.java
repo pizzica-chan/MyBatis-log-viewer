@@ -21,30 +21,97 @@ public final class TimeUtil {
         return toMillis(year, month, day, hour, min, sec, milli);
     }
 
+    /**
+     * UI / API の日時文字列を解釈する。
+     *
+     * <p>受け付ける形式は {@code yyyy-MM-dd}, {@code yyyy-MM-dd HH:mm},
+     * {@code yyyy-MM-dd HH:mm:ss}, {@code yyyy-MM-dd HH:mm:ss.SSS} の 4 通りのみ
+     * （{@code T} 区切りも可）。区切り文字・桁・暦としての妥当性をすべて検証し、
+     * 存在しない日時は繰り上げずに例外にする。
+     *
+     * @throws IllegalArgumentException 形式不正、または存在しない日時の場合
+     */
     public static long parseUiDatetime(String value) {
-        String v = value.trim().replace('T', ' ');
-        try {
-            int year = Integer.parseInt(v.substring(0, 4));
-            int month = Integer.parseInt(v.substring(5, 7));
-            int day = Integer.parseInt(v.substring(8, 10));
-            int hour = 0;
-            int min = 0;
-            int sec = 0;
-            int milli = 0;
-            if (v.length() >= 16) {
-                hour = Integer.parseInt(v.substring(11, 13));
-                min = Integer.parseInt(v.substring(14, 16));
-            }
-            if (v.length() >= 19) {
-                sec = Integer.parseInt(v.substring(17, 19));
-            }
-            if (v.length() >= 23 && v.charAt(19) == '.') {
-                milli = Integer.parseInt(v.substring(20, 23));
-            }
-            return toMillis(year, month, day, hour, min, sec, milli);
-        } catch (RuntimeException e) {
-            throw new IllegalArgumentException("日時形式を解釈できません: " + value);
+        if (value == null) {
+            throw invalidDatetime(null);
         }
+        String v = value.trim().replace('T', ' ');
+        int len = v.length();
+        if (len != 10 && len != 16 && len != 19 && len != 23) {
+            throw invalidDatetime(value);
+        }
+        if (v.charAt(4) != '-' || v.charAt(7) != '-') {
+            throw invalidDatetime(value);
+        }
+        if (len >= 16 && (v.charAt(10) != ' ' || v.charAt(13) != ':')) {
+            throw invalidDatetime(value);
+        }
+        if (len >= 19 && v.charAt(16) != ':') {
+            throw invalidDatetime(value);
+        }
+        if (len == 23 && v.charAt(19) != '.') {
+            throw invalidDatetime(value);
+        }
+
+        int year = digitsAt(v, 0, 4);
+        int month = digitsAt(v, 5, 2);
+        int day = digitsAt(v, 8, 2);
+        int hour = len >= 16 ? digitsAt(v, 11, 2) : 0;
+        int min = len >= 16 ? digitsAt(v, 14, 2) : 0;
+        int sec = len >= 19 ? digitsAt(v, 17, 2) : 0;
+        int milli = len == 23 ? digitsAt(v, 20, 3) : 0;
+        if (year < 0 || month < 0 || day < 0 || hour < 0 || min < 0 || sec < 0 || milli < 0) {
+            throw invalidDatetime(value);
+        }
+        if (!isValidDateTime(year, month, day, hour, min, sec, milli)) {
+            throw invalidDatetime(value);
+        }
+        return toMillis(year, month, day, hour, min, sec, milli);
+    }
+
+    static boolean isValidDateTime(int year, int month, int day, int hour, int min, int sec, int milli) {
+        if (month < 1 || month > 12) {
+            return false;
+        }
+        if (day < 1 || day > daysInMonth(year, month)) {
+            return false;
+        }
+        return hour <= 23 && min <= 59 && sec <= 59 && milli <= 999;
+    }
+
+    static int daysInMonth(int year, int month) {
+        switch (month) {
+            case 2:
+                return isLeapYear(year) ? 29 : 28;
+            case 4:
+            case 6:
+            case 9:
+            case 11:
+                return 30;
+            default:
+                return 31;
+        }
+    }
+
+    private static boolean isLeapYear(int year) {
+        return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    }
+
+    private static IllegalArgumentException invalidDatetime(String value) {
+        return new IllegalArgumentException("日時形式を解釈できません: " + value);
+    }
+
+    /** ASCII 数字のみを受け付ける。1 文字でも数字以外なら -1。 */
+    private static int digitsAt(String s, int off, int count) {
+        int result = 0;
+        for (int i = off; i < off + count; i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') {
+                return -1;
+            }
+            result = result * 10 + (c - '0');
+        }
+        return result;
     }
 
     public static String formatIso(long millis) {

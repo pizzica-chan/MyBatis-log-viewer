@@ -5,7 +5,9 @@ services:
     container_name: mlv-java
     restart: unless-stopped
     ports:
-      - "8767:8767"
+      # 認証を持たず /api/browse（任意ディレクトリの列挙）と /api/load（任意ディレクトリの
+      # インデックス化）を提供するため、ループバックのみに公開する
+      - "127.0.0.1:8767:8767"
     environment:
       MLV_HOME: /app
     volumes:

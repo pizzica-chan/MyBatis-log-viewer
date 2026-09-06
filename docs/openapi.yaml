@@ -39,12 +39,28 @@ paths:
         - name: max_elapsed
           in: query
           schema: { type: integer }
+        - name: since
+          in: query
+          description: >
+            期間の開始。yyyy-MM-dd / yyyy-MM-dd HH:mm / yyyy-MM-dd HH:mm:ss /
+            yyyy-MM-dd HH:mm:ss.SSS のいずれか（T 区切り可）。
+            存在しない日時（例 2026-02-30）は繰り上げず 400 を返す。
+          schema: { type: string }
+        - name: until
+          in: query
+          description: 期間の終了。形式と検証は since と同じ。
+          schema: { type: string }
         - name: offset
           in: query
           schema: { type: integer }
         - name: limit
           in: query
           schema: { type: integer }
+      responses:
+        "200":
+          description: 検索結果
+        "400":
+          description: 日時形式・正規表現・数値パラメータが不正
   /api/sql/detail:
     get:
       summary: 生ログブロック詳細

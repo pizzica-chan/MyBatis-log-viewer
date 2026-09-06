@@ -3,6 +3,8 @@ const MAX_PAGE_LIMIT = 5000;
 let offset = 0;
 let lastTotal = 0;
 let browsePath = "";
+/** ディレクトリ参照の親パス。「上へ」で再問い合わせしないよう一覧取得時に控える。 */
+let browseParent = null;
 let metaRange = { first: null, last: null };
 let exactQueryRange = null;
 /** 詳細ダイアログ表示中の SQL 時刻（ISO）。 */
@@ -176,15 +178,20 @@ function clearDatetimeFields() {
   clearExactQueryRange();
 }
 
+/** time 入力が HH:mm:ss を返す実装もあるため HH:mm に正規化する。 */
+function normalizeTimeValue(value, fallback) {
+  return (value || fallback).slice(0, 5);
+}
+
 function getSinceParam() {
   if (!els.sinceDate.value) return null;
-  const time = els.sinceTime.value || "00:00";
+  const time = normalizeTimeValue(els.sinceTime.value, "00:00");
   return `${els.sinceDate.value} ${time}:00.000`;
 }
 
 function getUntilParam() {
   if (!els.untilDate.value) return null;
-  const time = els.untilTime.value || "23:59";
+  const time = normalizeTimeValue(els.untilTime.value, "23:59");
   // 時刻入力は分単位のため、その分の末尾（59.999 秒）まで含める
   return `${els.untilDate.value} ${time}:59.999`;
 }
@@ -653,14 +660,17 @@ function escapeHtml(s) {
 }
 
 async function openBrowseDialog() {
-  browsePath = els.logDir.value.trim();
-  await refreshBrowseList();
+  await refreshBrowseList(els.logDir.value.trim());
   els.browseDialog.showModal();
 }
 
-async function refreshBrowseList() {
+/**
+ * 一覧を取得して表示する。現在位置 browsePath は取得に成功したときだけ更新する。
+ * 失敗時に不正なパスが残ると、そのまま「選択」でログディレクトリ欄に入ってしまうため。
+ */
+async function refreshBrowseList(nextPath) {
   const params = new URLSearchParams();
-  if (browsePath) params.set("path", browsePath);
+  if (nextPath) params.set("path", nextPath);
   const res = await fetch("/api/browse?" + params);
   const data = await res.json();
   if (!res.ok) {
@@ -668,6 +678,7 @@ async function refreshBrowseList() {
     return;
   }
   browsePath = data.current;
+  browseParent = data.parent;
   els.browseCurrent.textContent = data.current;
   els.browseUp.disabled = !data.parent;
   els.browseList.innerHTML = "";
@@ -677,10 +688,7 @@ async function refreshBrowseList() {
     btn.type = "button";
     btn.textContent = dir.split(/[/\\]/).pop() || dir;
     btn.title = dir;
-    btn.addEventListener("click", async () => {
-      browsePath = dir;
-      await refreshBrowseList();
-    });
+    btn.addEventListener("click", () => refreshBrowseList(dir));
     li.appendChild(btn);
     els.browseList.appendChild(li);
   }
@@ -735,15 +743,9 @@ els.search.addEventListener("click", () => { clearExactQueryRange(); offset = 0;
 els.reset.addEventListener("click", () => { resetFilters(); loadSql(); });
 els.loadDir.addEventListener("click", loadDirectory);
 els.browse.addEventListener("click", openBrowseDialog);
-els.browseUp.addEventListener("click", async () => {
-  const params = new URLSearchParams();
-  if (browsePath) params.set("path", browsePath);
-  const res = await fetch("/api/browse?" + params);
-  const data = await res.json();
-  if (data.parent) {
-    browsePath = data.parent;
-    await refreshBrowseList();
-  }
+els.browseUp.addEventListener("click", () => {
+  // 親パスは一覧取得時に控えてあるため、問い合わせ直す必要はない
+  if (browseParent) refreshBrowseList(browseParent);
 });
 els.browseSelect.addEventListener("click", () => {
   els.logDir.value = browsePath;
