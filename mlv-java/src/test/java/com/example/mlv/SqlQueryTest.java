@@ -105,6 +105,100 @@ class SqlQueryTest {
         }
     }
 
+    /**
+     * SQL 押し下げパスと Java 走査パスが同じ結果になることを確認する。
+     * 走査側は常に真となる source 正規表現を足すだけにして、絞り込み条件は揃える。
+     */
+    @Test
+    void sqlPushdownMatchesJavaScan() throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            for (SqlQueryFilter pushdown : pushdownFilters()) {
+                SqlQueryFilter scan = copyOf(pushdown);
+                scan.sourceRe = SqlQueryFilter.compileRegex(".");
+                assertFalse(pushdown.needsJavaFilter());
+                assertTrue(scan.needsJavaFilter());
+
+                SqlQuery.Result a = SqlQuery.querySql(conn, pushdown, 0, 100);
+                SqlQuery.Result b = SqlQuery.querySql(conn, scan, 0, 100);
+                assertEquals(b.total, a.total);
+                assertEquals(ids(b), ids(a));
+            }
+        }
+    }
+
+    @Test
+    void pagingIsAppliedInSql() throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlQuery.Result all = SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 100);
+            SqlQuery.Result second = SqlQuery.querySql(conn, new SqlQueryFilter(), 2, 3);
+
+            // total は offset/limit に影響されない
+            assertEquals(all.total, second.total);
+            assertEquals(3, second.page.size());
+            assertEquals(ids(all).subList(2, 5), ids(second));
+
+            // 範囲外 offset ではページが空になる
+            assertEquals(0, SqlQuery.querySql(conn, new SqlQueryFilter(), all.total, 100).page.size());
+        }
+    }
+
+    private static java.util.List<SqlQueryFilter> pushdownFilters() {
+        java.util.List<SqlQueryFilter> filters = new java.util.ArrayList<>();
+        filters.add(new SqlQueryFilter());
+
+        SqlQueryFilter byType = new SqlQueryFilter();
+        byType.sqlTypes = SqlQueryFilter.parseSqlTypeFilter("SELECT,UPDATE");
+        filters.add(byType);
+
+        SqlQueryFilter byElapsed = new SqlQueryFilter();
+        byElapsed.minElapsed = 1;
+        filters.add(byElapsed);
+
+        SqlQueryFilter byRows = new SqlQueryFilter();
+        byRows.minRowCount = 0;
+        byRows.maxRowCount = 10;
+        filters.add(byRows);
+
+        SqlQueryFilter incomplete = new SqlQueryFilter();
+        incomplete.complete = Boolean.FALSE;
+        filters.add(incomplete);
+
+        SqlQueryFilter byTime = new SqlQueryFilter();
+        byTime.sinceMillis = TimeUtil.parseUiDatetime("2026-06-15 00:19:11.000");
+        byTime.untilMillis = TimeUtil.parseUiDatetime("2026-06-15 00:19:12.000");
+        filters.add(byTime);
+        return filters;
+    }
+
+    private static SqlQueryFilter copyOf(SqlQueryFilter f) {
+        SqlQueryFilter c = new SqlQueryFilter();
+        c.sqlTypes = f.sqlTypes;
+        c.sinceMillis = f.sinceMillis;
+        c.untilMillis = f.untilMillis;
+        c.minElapsed = f.minElapsed;
+        c.maxElapsed = f.maxElapsed;
+        c.minRowCount = f.minRowCount;
+        c.maxRowCount = f.maxRowCount;
+        c.complete = f.complete;
+        return c;
+    }
+
+    private static java.util.List<Long> ids(SqlQuery.Result r) {
+        java.util.List<Long> out = new java.util.ArrayList<>();
+        for (SqlLogIndex.EntryRow e : r.page) {
+            out.add(e.id);
+        }
+        return out;
+    }
+
     private static SqlQuery.Result queryBySource(Connection conn, String pattern) throws Exception {
         SqlQueryFilter f = new SqlQueryFilter();
         f.sourceRe = SqlQueryFilter.compileRegex(pattern);

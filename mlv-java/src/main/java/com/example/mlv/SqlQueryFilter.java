@@ -27,6 +27,12 @@ public final class SqlQueryFilter {
         return grepRe != null;
     }
 
+    /** SQL 側で表現できない条件があるか（ある場合のみ全件走査が必要）。 */
+    public boolean needsJavaFilter() {
+        return mapperRe != null || sqlRe != null || parametersRe != null
+                || threadRe != null || sourceRe != null || grepRe != null;
+    }
+
     public static Set<String> parseSqlTypeFilter(String value) {
         if (value == null || value.isEmpty()) {
             return null;

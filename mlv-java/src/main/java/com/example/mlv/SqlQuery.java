@@ -18,6 +18,7 @@ public final class SqlQuery {
 
     private static final String REGEX_META = ".^$*+?()[]{}|\\";
     private static final int FTS_MIN_LEN = 3;
+    private static final String ORDER_BY = " ORDER BY e.ts_millis, e.file_id, e.line_no";
 
     private SqlQuery() {
     }
@@ -32,12 +33,34 @@ public final class SqlQuery {
         }
     }
 
+    /**
+     * SQL 一覧を検索する。
+     *
+     * <p>SQL 種別を 1 つだけ指定した場合は複合索引 {@code idx_entries_type_ts} を
+     * 順序どおり辿れるため、深い offset でも高速。カンマ区切りで複数指定すると
+     * {@code IN} になり索引順を使えないため、SQLite は {@code idx_entries_ts} を
+     * 走査して行ごとに種別を判定する（20 万件・offset 40000 で 0.03 秒 → 0.66 秒）。
+     */
     public static Result querySql(Connection conn, SqlQueryFilter filter, long offset, long limit)
             throws SQLException {
-        StringBuilder sql = new StringBuilder(SqlLogIndex.selectBase());
-        sql.append("WHERE 1=1");
+        StringBuilder where = new StringBuilder("WHERE 1=1");
         List<Object> params = new ArrayList<>();
+        appendConditions(where, params, conn, filter);
 
+        if (!filter.needsJavaFilter()) {
+            // 正規表現・grep が無ければ件数もページングも SQL 側で完結できる
+            long total = countMatches(conn, where, params);
+            List<EntryRow> page = limit > 0
+                    ? fetchPage(conn, where, params, offset, limit)
+                    : new ArrayList<EntryRow>();
+            return new Result(total, page);
+        }
+        return scanWithJavaFilter(conn, where, params, filter, offset, limit);
+    }
+
+    /** SQL 側で評価できる条件を WHERE 句に積む。 */
+    private static void appendConditions(StringBuilder sql, List<Object> params,
+            Connection conn, SqlQueryFilter filter) throws SQLException {
         if (filter.sqlTypes != null && !filter.sqlTypes.isEmpty()) {
             sql.append(" AND e.sql_type IN (");
             boolean first = true;
@@ -81,8 +104,50 @@ public final class SqlQuery {
             sql.append(" AND e.id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)");
             params.add(ftsMatchExpr(filter.grepText));
         }
+    }
 
-        sql.append(" ORDER BY e.ts_millis, e.file_id, e.line_no");
+    private static long countMatches(Connection conn, CharSequence where, List<Object> params)
+            throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM entries e " + where)) {
+            bindParams(ps, params);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
+        }
+    }
+
+    private static List<EntryRow> fetchPage(Connection conn, CharSequence where, List<Object> params,
+            long offset, long limit) throws SQLException {
+        List<EntryRow> page = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                SqlLogIndex.selectBase() + where + ORDER_BY + " LIMIT ? OFFSET ?")) {
+            int i = bindParams(ps, params);
+            ps.setLong(i++, limit);
+            ps.setLong(i, offset);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    page.add(SqlLogIndex.rowFrom(rs));
+                }
+            }
+        }
+        return page;
+    }
+
+    private static int bindParams(PreparedStatement ps, List<Object> params) throws SQLException {
+        for (int i = 0; i < params.size(); i++) {
+            ps.setObject(i + 1, params.get(i));
+        }
+        return params.size() + 1;
+    }
+
+    /**
+     * 正規表現 / grep がある場合のみ、合致行を全件走査して Java 側で絞り込む。
+     * 件数を確定させるため打ち切れない。
+     */
+    private static Result scanWithJavaFilter(Connection conn, CharSequence where, List<Object> params,
+            SqlQueryFilter filter, long offset, long limit) throws SQLException {
+        StringBuilder sql = new StringBuilder(SqlLogIndex.selectBase());
+        sql.append(where).append(ORDER_BY);
 
         boolean needsRaw = filter.needsRaw();
         Map<String, RandomAccessFile> handles = needsRaw ? new HashMap<String, RandomAccessFile>() : null;
@@ -90,13 +155,11 @@ public final class SqlQuery {
         long total = 0;
         List<EntryRow> page = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            for (int i = 0; i < params.size(); i++) {
-                ps.setObject(i + 1, params.get(i));
-            }
+            bindParams(ps, params);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     EntryRow e = SqlLogIndex.rowFrom(rs);
-                    if (!matchesIndexColumns(e, filter)) {
+                    if (!matchesRegexFilters(e, filter)) {
                         continue;
                     }
                     if (needsRaw) {
@@ -141,31 +204,11 @@ public final class SqlQuery {
         return "\"" + literal.replace("\"", "\"\"") + "\"";
     }
 
-    private static boolean matchesIndexColumns(EntryRow e, SqlQueryFilter f) {
-        if (f.sqlTypes != null && !f.sqlTypes.contains(e.sqlType.toUpperCase())) {
-            return false;
-        }
-        if (f.sinceMillis != null && e.tsMillis < f.sinceMillis) {
-            return false;
-        }
-        if (f.untilMillis != null && e.tsMillis > f.untilMillis) {
-            return false;
-        }
-        if (f.minElapsed != null && (e.elapsedMs == null || e.elapsedMs < f.minElapsed)) {
-            return false;
-        }
-        if (f.maxElapsed != null && (e.elapsedMs == null || e.elapsedMs > f.maxElapsed)) {
-            return false;
-        }
-        if (f.minRowCount != null && (e.rowCount == null || e.rowCount < f.minRowCount)) {
-            return false;
-        }
-        if (f.maxRowCount != null && (e.rowCount == null || e.rowCount > f.maxRowCount)) {
-            return false;
-        }
-        if (f.complete != null && e.complete != f.complete) {
-            return false;
-        }
+    /**
+     * SQL 側で表現できない正規表現条件だけを判定する。
+     * sql_type / 時刻 / elapsed / row_count / complete は WHERE 句で既に絞り込み済み。
+     */
+    private static boolean matchesRegexFilters(EntryRow e, SqlQueryFilter f) {
         if (f.sourceRe != null && !f.sourceRe.matcher(e.source).find()) {
             return false;
         }

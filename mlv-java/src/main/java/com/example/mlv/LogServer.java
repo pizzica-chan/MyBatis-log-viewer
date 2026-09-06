@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -39,6 +40,43 @@ public final class LogServer {
 
     private static final int MAX_LIMIT = 5000;
     private static final int DEFAULT_LIMIT = 200;
+    private static final long PREVIOUS_WORKER_WAIT_MS = 60_000L;
+
+    /**
+     * 読み込み完了時点の meta 情報。
+     * 進捗ポーリング（/api/meta）が重い検索と dbLock を奪い合わないよう、DB に触らず応答するために持つ。
+     */
+    private static final class MetaSnapshot {
+        static final MetaSnapshot EMPTY =
+                new MetaSnapshot(0L, null, null, 0, Collections.<SkippedSample>emptyList());
+
+        final long total;
+        final String first;
+        final String last;
+        final int skippedLines;
+        final List<SkippedSample> skippedSamples;
+
+        MetaSnapshot(long total, String first, String last, int skippedLines,
+                List<SkippedSample> skippedSamples) {
+            this.total = total;
+            this.first = first;
+            this.last = last;
+            this.skippedLines = skippedLines;
+            this.skippedSamples = skippedSamples;
+        }
+    }
+
+    private static final class SkippedSample {
+        final String source;
+        final long lineNo;
+        final String preview;
+
+        SkippedSample(String source, long lineNo, String preview) {
+            this.source = source;
+            this.lineNo = lineNo;
+            this.preview = preview;
+        }
+    }
 
     private volatile Path logRoot;
     private volatile List<Path> logPaths = Collections.emptyList();
@@ -49,6 +87,7 @@ public final class LogServer {
     private final AtomicLong loadProgress = new AtomicLong();
     private final AtomicLong loadGeneration = new AtomicLong(0);
     private volatile Thread loadWorker;
+    private volatile MetaSnapshot metaSnapshot = MetaSnapshot.EMPTY;
 
     private final Object loadLock = new Object();
     private final Object dbLock = new Object();
@@ -138,12 +177,13 @@ public final class LogServer {
 
     private void startLoad() {
         final long gen = loadGeneration.incrementAndGet();
-        Thread previous;
+        final Thread previous;
         synchronized (loadLock) {
             previous = loadWorker;
             loadStatus = "loading";
             loadError = null;
             loadProgress.set(0);
+            metaSnapshot = MetaSnapshot.EMPTY;
         }
         if (previous != null) {
             previous.interrupt();
@@ -154,17 +194,22 @@ public final class LogServer {
         Thread worker = new Thread(new Runnable() {
             @Override
             public void run() {
+                // 先行ワーカーが同じ DB ファイルを閉じ切るまで待つ。
+                // 待たずに削除・再オープンすると同一ファイルへの二重書き込みでインデックスが壊れる
+                if (!awaitPreviousWorker(previous)) {
+                    return;
+                }
                 Connection newConn = null;
                 boolean adopted = false;
                 try {
-                    long total;
+                    MetaSnapshot snapshot;
                     if (root == null) {
                         if (isStale(gen)) {
                             return;
                         }
                         newConn = SqlLogIndex.openMemory();
                         SqlLogIndex.clearIndex(newConn);
-                        total = 0;
+                        snapshot = MetaSnapshot.EMPTY;
                     } else {
                         if (isStale(gen)) {
                             return;
@@ -182,7 +227,7 @@ public final class LogServer {
                             }
                             newConn = SqlLogIndex.openOrCreate(root);
                             SqlLogIndex.clearIndex(newConn);
-                            total = 0;
+                            snapshot = MetaSnapshot.EMPTY;
                         } else if (SqlLogIndex.needsRebuild(newConn, paths, enableFts)) {
                             if (isStale(gen)) {
                                 return;
@@ -193,12 +238,13 @@ public final class LogServer {
                                 return;
                             }
                             newConn = SqlLogIndex.openOrCreate(root);
-                            SqlLogIndex.BuildResult built =
-                                    SqlLogIndex.buildIndex(newConn, paths, loadProgress::set, enableFts);
-                            total = built.entryCount;
+                            SqlLogIndex.buildIndex(newConn, paths, loadProgress::set, enableFts);
+                            SqlLogIndex.updateStatistics(newConn);
+                            snapshot = captureMeta(newConn);
                         } else {
-                            total = SqlLogIndex.entryCount(newConn);
-                            loadProgress.set(total);
+                            SqlLogIndex.ensureStatistics(newConn);
+                            snapshot = captureMeta(newConn);
+                            loadProgress.set(snapshot.total);
                         }
                     }
                     if (isStale(gen)) {
@@ -210,7 +256,8 @@ public final class LogServer {
                         }
                         replaceConn(newConn);
                         adopted = true;
-                        loadProgress.set(total);
+                        metaSnapshot = snapshot;
+                        loadProgress.set(snapshot.total);
                         loadStatus = "ready";
                     }
                 } catch (Throwable t) {
@@ -228,11 +275,30 @@ public final class LogServer {
                 }
             }
         }, "mlv-loader");
+        worker.setDaemon(true);
+        // 代入と起動の間に startLoad が割り込むと interrupt が届かないため、ロック内で起動する
         synchronized (loadLock) {
             loadWorker = worker;
+            worker.start();
         }
-        worker.setDaemon(true);
-        worker.start();
+    }
+
+    /**
+     * 先行ワーカーの終了を待つ。
+     *
+     * @return さらに新しい読み込みに割り込まれた場合は false（この世代は破棄する）
+     */
+    private static boolean awaitPreviousWorker(Thread previous) {
+        if (previous == null) {
+            return true;
+        }
+        try {
+            previous.join(PREVIOUS_WORKER_WAIT_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return true;
     }
 
     private boolean isStale(long gen) {
@@ -264,58 +330,59 @@ public final class LogServer {
     }
 
     private void ensureLoadStarted() {
-        if (!logPaths.isEmpty() && "idle".equals(loadStatus)) {
-            startLoad();
+        synchronized (loadLock) {
+            if (logPaths.isEmpty() || !"idle".equals(loadStatus)) {
+                return;
+            }
+            // 同時に届いた /api/meta が二重にワーカーを起動しないよう、先に状態を進める
+            loadStatus = "loading";
         }
+        startLoad();
     }
 
-    private JsonObject metaPayload() throws Exception {
-        ensureLoadStarted();
-        boolean loading = "loading".equals(loadStatus);
-        long progress = loadProgress.get();
-
-        long total;
-        String first = null;
-        String last = null;
-        if (loading) {
-            total = progress;
-        } else if ("ready".equals(loadStatus)) {
-            synchronized (dbLock) {
-                total = SqlLogIndex.entryCount(conn);
-                String[] bounds = SqlLogIndex.timestampBounds(conn);
-                first = bounds[0];
-                last = bounds[1];
+    /** 読み込み完了時の DB 内容を控える。以降 /api/meta は DB に触らない。 */
+    private static MetaSnapshot captureMeta(Connection c) throws SQLException {
+        long total = SqlLogIndex.entryCount(c);
+        String[] bounds = SqlLogIndex.timestampBounds(c);
+        int skipped = SqlLogIndex.getSkippedLineCount(c);
+        List<SkippedSample> samples = Collections.emptyList();
+        if (skipped > 0) {
+            samples = new ArrayList<>();
+            for (SkippedLine s : SqlLogIndex.getSkippedLineSamples(c)) {
+                String source = SqlLogIndex.filePath(c, s.fileId);
+                samples.add(new SkippedSample(source != null ? source : "", s.lineNo, s.preview));
             }
-        } else {
-            total = 0;
         }
+        return new MetaSnapshot(total, bounds[0], bounds[1], skipped, samples);
+    }
+
+    private JsonObject metaPayload() {
+        ensureLoadStarted();
+        String status = loadStatus;
+        boolean loading = "loading".equals(status);
+        long progress = loadProgress.get();
+        MetaSnapshot meta = "ready".equals(status) ? metaSnapshot : MetaSnapshot.EMPTY;
 
         JsonObject payload = new JsonObject();
         payload.addProperty("directory", logRoot != null ? PathUtil.normalizePath(logRoot) : null);
         payload.add("files", sourceNames());
         payload.addProperty("loading", loading);
-        payload.addProperty("load_status", loadStatus);
+        payload.addProperty("load_status", status);
         payload.addProperty("load_progress", progress);
-        payload.addProperty("total", total);
-        payload.addProperty("first", first);
-        payload.addProperty("last", last);
-        if (!loading && "ready".equals(loadStatus)) {
-            synchronized (dbLock) {
-                int skipped = SqlLogIndex.getSkippedLineCount(conn);
-                if (skipped > 0) {
-                    payload.addProperty("skipped_lines", skipped);
-                    JsonArray samples = new JsonArray();
-                    for (SkippedLine s : SqlLogIndex.getSkippedLineSamples(conn)) {
-                        JsonObject o = new JsonObject();
-                        String source = SqlLogIndex.filePath(conn, s.fileId);
-                        o.addProperty("source", source != null ? source : "");
-                        o.addProperty("line_no", s.lineNo);
-                        o.addProperty("preview", s.preview);
-                        samples.add(o);
-                    }
-                    payload.add("skipped_samples", samples);
-                }
+        payload.addProperty("total", loading ? progress : meta.total);
+        payload.addProperty("first", meta.first);
+        payload.addProperty("last", meta.last);
+        if (!loading && meta.skippedLines > 0) {
+            payload.addProperty("skipped_lines", meta.skippedLines);
+            JsonArray samples = new JsonArray();
+            for (SkippedSample s : meta.skippedSamples) {
+                JsonObject o = new JsonObject();
+                o.addProperty("source", s.source);
+                o.addProperty("line_no", s.lineNo);
+                o.addProperty("preview", s.preview);
+                samples.add(o);
             }
+            payload.add("skipped_samples", samples);
         }
         if (loadError != null) {
             payload.addProperty("load_error", loadError);
@@ -419,11 +486,7 @@ public final class LogServer {
             this.loadError = null;
         }
         startLoad();
-        try {
-            sendJson(ex, 200, metaPayload());
-        } catch (Exception e) {
-            sendErrorJson(ex, 500, e.getMessage());
-        }
+        sendJson(ex, 200, metaPayload());
     }
 
     private void handleSql(HttpExchange ex) throws IOException {

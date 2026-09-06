@@ -34,6 +34,8 @@ public final class SqlLogIndex {
     private static final long PROGRESS_INTERVAL = 50_000L;
     private static final long COMMIT_INTERVAL = 200_000L;
     private static final int MAX_SKIPPED_SAMPLES = 5;
+    private static final long SHUTDOWN_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(1);
+    private static final long SHUTDOWN_POLL_MS = 50L;
     private static final int PREVIEW_MAX_LEN = 120;
     private static final String META_SKIPPED_LINES = "skipped_lines";
     private static final String META_SKIPPED_SAMPLES = "skipped_samples";
@@ -113,7 +115,10 @@ public final class SqlLogIndex {
                     + "thread TEXT NOT NULL, level TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 1)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_ts ON entries(ts_millis, file_id, line_no)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_mapper ON entries(mapper)");
-            st.execute("CREATE INDEX IF NOT EXISTS idx_entries_sql_type ON entries(sql_type)");
+            // SQL 種別で絞りつつ時刻順に並べる一覧検索用。単独列の idx_entries_sql_type を包含する
+            st.execute("CREATE INDEX IF NOT EXISTS idx_entries_type_ts "
+                    + "ON entries(sql_type, ts_millis, file_id, line_no)");
+            st.execute("DROP INDEX IF EXISTS idx_entries_sql_type");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_elapsed ON entries(elapsed_ms)");
             ensureEntriesColumns(st);
         }
@@ -216,6 +221,30 @@ public final class SqlLogIndex {
             st.execute("DELETE FROM meta WHERE key = 'fingerprint'");
         }
         conn.commit();
+    }
+
+    /**
+     * クエリプランナ用の統計を生成する。
+     * これが無いと SQLite が sql_type / ts_millis のインデックスを選び損ねることがある。
+     */
+    public static void updateStatistics(Connection conn) {
+        try (Statement st = conn.createStatement()) {
+            st.execute("ANALYZE");
+        } catch (SQLException ignored) {
+            // 統計が無くても検索自体は動くため失敗は無視する
+        }
+    }
+
+    /** 既存インデックスを再利用する場合に、統計が無ければ生成する。 */
+    public static void ensureStatistics(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'")) {
+            if (rs.next()) {
+                return;
+            }
+        }
+        updateStatistics(conn);
     }
 
     public static long entryCount(Connection conn) throws SQLException {
@@ -446,12 +475,7 @@ public final class SqlLogIndex {
                 }
             }
         } finally {
-            pool.shutdown();
-            try {
-                pool.awaitTermination(1, TimeUnit.MINUTES);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            shutdownParsers(pool, queue);
         }
 
         Throwable t = error.get();
@@ -475,6 +499,36 @@ public final class SqlLogIndex {
             progress.onProgress(total);
         }
         return new BuildResult(total, (int) skippedCounter.get(), new ArrayList<>(skippedSamples));
+    }
+
+    /**
+     * パーサスレッドを確実に終了させる。
+     *
+     * <p>読み込み中断で消費側が止まると、パーサスレッドは {@code queue.put()} で
+     * 永久にブロックしたままになる（ログファイルのハンドルも保持し続ける）。
+     * 割り込みに加えてキューを排出し続けることで put を解放し、スレッドを回収する。
+     */
+    private static void shutdownParsers(ExecutorService pool, BlockingQueue<List<Row>> queue) {
+        pool.shutdownNow();
+        boolean interrupted = Thread.interrupted();
+        try {
+            long deadline = System.nanoTime() + SHUTDOWN_TIMEOUT_NANOS;
+            while (System.nanoTime() < deadline) {
+                queue.clear();
+                try {
+                    if (pool.awaitTermination(SHUTDOWN_POLL_MS, TimeUnit.MILLISECONDS)) {
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            queue.clear();
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static String ftsBody(Row r) {
@@ -749,18 +803,27 @@ public final class SqlLogIndex {
         return trimmed.substring(0, PREVIEW_MAX_LEN - 3) + "...";
     }
 
+    /**
+     * 割り込みで諦めずに投入する。ただし消費側が既に停止している場合に
+     * 永久ブロックしないよう上限時間を設ける（超過時は投入を諦める）。
+     */
     private static <T> void putUninterruptibly(BlockingQueue<T> queue, T item) {
-        boolean interrupted = false;
-        while (true) {
-            try {
-                queue.put(item);
-                break;
-            } catch (InterruptedException e) {
-                interrupted = true;
+        boolean interrupted = Thread.interrupted();
+        try {
+            long deadline = System.nanoTime() + SHUTDOWN_TIMEOUT_NANOS;
+            while (System.nanoTime() < deadline) {
+                try {
+                    if (queue.offer(item, SHUTDOWN_POLL_MS, TimeUnit.MILLISECONDS)) {
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
-        }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
