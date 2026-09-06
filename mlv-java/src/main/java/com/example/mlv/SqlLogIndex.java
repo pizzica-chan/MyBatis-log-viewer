@@ -34,7 +34,10 @@ public final class SqlLogIndex {
     private static final long PROGRESS_INTERVAL = 50_000L;
     private static final long COMMIT_INTERVAL = 200_000L;
     private static final int MAX_SKIPPED_SAMPLES = 5;
-    private static final long SHUTDOWN_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(1);
+    /** パーサスレッド回収の上限時間。呼び出し側が待ち時間を決めるために公開する。 */
+    public static final long PARSER_SHUTDOWN_TIMEOUT_MS = 60_000L;
+    private static final long SHUTDOWN_TIMEOUT_NANOS =
+            TimeUnit.MILLISECONDS.toNanos(PARSER_SHUTDOWN_TIMEOUT_MS);
     private static final long SHUTDOWN_POLL_MS = 50L;
     private static final int PREVIEW_MAX_LEN = 120;
     private static final String META_SKIPPED_LINES = "skipped_lines";

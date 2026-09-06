@@ -42,7 +42,15 @@ public final class LogServer {
     // 一気に膨らむ（5000 件で 5.2MB 実測）。raw を切り詰めるとハイライトとずれるため上限側で抑える
     private static final int MAX_LIMIT = 1000;
     private static final int DEFAULT_LIMIT = 200;
-    private static final long PREVIOUS_WORKER_WAIT_MS = 60_000L;
+    /**
+     * 先行ワーカーの終了を待つ上限。
+     *
+     * <p>割り込まれたワーカーは「パーサ回収（最大 {@code PARSER_SHUTDOWN_TIMEOUT_MS}）→
+     * abortIncompleteBuild →接続クローズ」の順で後始末する。回収だけで上限いっぱい掛かると
+     * 残りの後始末は待ち時間の外に出てしまうため、回収の上限に余裕を足した値にする。
+     */
+    private static final long PREVIOUS_WORKER_WAIT_MS =
+            SqlLogIndex.PARSER_SHUTDOWN_TIMEOUT_MS + 30_000L;
 
     /**
      * 読み込み完了時点の meta 情報。
@@ -196,14 +204,15 @@ public final class LogServer {
         Thread worker = new Thread(new Runnable() {
             @Override
             public void run() {
-                // 先行ワーカーが同じ DB ファイルを閉じ切るまで待つ。
-                // 待たずに削除・再オープンすると同一ファイルへの二重書き込みでインデックスが壊れる
-                if (!awaitPreviousWorker(previous)) {
-                    return;
-                }
                 Connection newConn = null;
                 boolean adopted = false;
                 try {
+                    // 先行ワーカーが同じ DB ファイルを閉じ切るまで待つ。待たずに削除・再オープンすると
+                    // 同一ファイルへの二重書き込みでインデックスが壊れる。
+                    // 待ち切れなかった場合は例外になり、下の catch が error 状態にする
+                    if (!awaitPreviousWorker(previous)) {
+                        return;
+                    }
                     MetaSnapshot snapshot;
                     if (root == null) {
                         if (isStale(gen)) {
@@ -286,9 +295,13 @@ public final class LogServer {
     }
 
     /**
-     * 先行ワーカーの終了を待つ。
+     * 先行ワーカーの終了を待つ。待ち切れない場合はこの世代を捨てる。
      *
-     * @return さらに新しい読み込みに割り込まれた場合は false（この世代は破棄する）
+     * <p>先行ワーカーが生きているまま進むと、同じ DB ファイルを削除・再オープンした先へ
+     * 旧接続が abortIncompleteBuild を書き込みうる。上限を超えたら索引を壊すより
+     * エラーにして中断する。
+     *
+     * @return 先に進んでよい場合のみ true
      */
     private static boolean awaitPreviousWorker(Thread previous) {
         if (previous == null) {
@@ -299,6 +312,11 @@ public final class LogServer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
+        }
+        if (previous.isAlive()) {
+            throw new IllegalStateException(
+                    "先行する読み込みが " + (PREVIOUS_WORKER_WAIT_MS / 1000)
+                            + " 秒以内に終了しませんでした。インデックスを保護するため中断します");
         }
         return true;
     }
