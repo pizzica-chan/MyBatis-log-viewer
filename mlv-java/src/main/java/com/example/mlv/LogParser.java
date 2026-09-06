@@ -3,6 +3,7 @@ package com.example.mlv;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -92,7 +93,7 @@ public final class LogParser {
         String field3 = rest.substring(s3, e3);
         String message = rest.substring(e3 + FIELD3_END.length());
 
-        String level = field2.toUpperCase();
+        String level = field2.toUpperCase(Locale.ROOT);
         if (!KNOWN_LEVELS.contains(level)) {
             return null;
         }

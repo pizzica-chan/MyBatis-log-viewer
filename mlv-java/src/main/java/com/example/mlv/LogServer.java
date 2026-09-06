@@ -38,7 +38,9 @@ import com.example.mlv.SqlStats.Summary;
 
 public final class LogServer {
 
-    private static final int MAX_LIMIT = 5000;
+    // 一覧は行ごとに MyBatis ブロック全文（raw）を返すため、上限を上げるとレスポンスが
+    // 一気に膨らむ（5000 件で 5.2MB 実測）。raw を切り詰めるとハイライトとずれるため上限側で抑える
+    private static final int MAX_LIMIT = 1000;
     private static final int DEFAULT_LIMIT = 200;
     private static final long PREVIOUS_WORKER_WAIT_MS = 60_000L;
 
@@ -80,7 +82,6 @@ public final class LogServer {
 
     private volatile Path logRoot;
     private volatile List<Path> logPaths = Collections.emptyList();
-    private final boolean enableFts;
 
     private volatile String loadStatus = "idle";
     private volatile String loadError;
@@ -95,10 +96,9 @@ public final class LogServer {
 
     private final Map<String, byte[]> staticCache = new HashMap<>();
 
-    public LogServer(Path logRoot, List<Path> logPaths, boolean enableFts) {
+    public LogServer(Path logRoot, List<Path> logPaths) {
         this.logRoot = logRoot;
         this.logPaths = logPaths != null ? logPaths : Collections.<Path>emptyList();
-        this.enableFts = enableFts;
     }
 
     public void start(String host, int port) throws IOException {
@@ -120,7 +120,6 @@ public final class LogServer {
 
         System.out.println("MyBatis Log Viewer (Java): http://" + host + ":" + port);
         System.out.println("インデックス: " + IndexStore.tmpIndexDir() + " (MLV_HOME で repo 変更可)");
-        System.out.println("全文検索 FTS5: " + (enableFts ? "有効" : "無効（--fts で有効化）"));
         if (logRoot != null) {
             System.out.println("ログディレクトリ: " + PathUtil.normalizePath(logRoot));
         }
@@ -164,6 +163,9 @@ public final class LogServer {
                     sendError(ex, 404, "not found");
                 }
             } catch (Exception e) {
+                // 127.0.0.1 限定のローカルツールのため、詳細はログにもレスポンスにも出す
+                System.err.println("リクエスト処理に失敗しました: " + ex.getRequestURI());
+                e.printStackTrace();
                 try {
                     sendError(ex, 500, e.getMessage() != null ? e.getMessage() : e.toString());
                 } catch (IOException ignored) {
@@ -228,7 +230,7 @@ public final class LogServer {
                             newConn = SqlLogIndex.openOrCreate(root);
                             SqlLogIndex.clearIndex(newConn);
                             snapshot = MetaSnapshot.EMPTY;
-                        } else if (SqlLogIndex.needsRebuild(newConn, paths, enableFts)) {
+                        } else if (SqlLogIndex.needsRebuild(newConn, paths)) {
                             if (isStale(gen)) {
                                 return;
                             }
@@ -238,7 +240,7 @@ public final class LogServer {
                                 return;
                             }
                             newConn = SqlLogIndex.openOrCreate(root);
-                            SqlLogIndex.buildIndex(newConn, paths, loadProgress::set, enableFts);
+                            SqlLogIndex.buildIndex(newConn, paths, loadProgress::set);
                             SqlLogIndex.updateStatistics(newConn);
                             snapshot = captureMeta(newConn);
                         } else {
@@ -516,8 +518,6 @@ public final class LogServer {
             filter.threadRe = SqlQueryFilter.compileRegex(p.get("thread"));
             filter.sourceRe = SqlQueryFilter.compileRegex(p.get("source"));
             filter.grepRe = SqlQueryFilter.compileRegex(p.get("grep"));
-            String grep = p.get("grep");
-            filter.grepText = (grep != null && !grep.isEmpty()) ? grep : null;
             filter.minElapsed = SqlQueryFilter.parseIntOrNull(p.get("min_elapsed"));
             filter.maxElapsed = SqlQueryFilter.parseIntOrNull(p.get("max_elapsed"));
             filter.minRowCount = SqlQueryFilter.parseIntOrNull(p.get("min_row_count"));
@@ -745,7 +745,8 @@ public final class LogServer {
                 t.addProperty("sql_type", e.getKey());
                 t.addProperty("count", e.getValue());
                 if (maxCount > 0) {
-                    t.addProperty("pct", 100.0 * e.getValue() / maxCount);
+                    // 全体比ではなく最大値を 100 とする相対値（バーの見た目用）
+                    t.addProperty("bar_ratio", 100.0 * e.getValue() / maxCount);
                 }
                 types.add(t);
             }
@@ -862,8 +863,9 @@ public final class LogServer {
             return null;
         }
         synchronized (staticCache) {
-            if (staticCache.containsKey(name)) {
-                return staticCache.get(name);
+            byte[] cached = staticCache.get(name);
+            if (cached != null) {
+                return cached;
             }
         }
         byte[] data = null;
@@ -874,8 +876,11 @@ public final class LogServer {
         } catch (IOException ignored) {
             data = null;
         }
-        synchronized (staticCache) {
-            staticCache.put(name, data);
+        // 存在しないパスを覚えるとリクエスト由来のキーでマップが無限に伸びるため、成功時のみ保持する
+        if (data != null) {
+            synchronized (staticCache) {
+                staticCache.put(name, data);
+            }
         }
         return data;
     }

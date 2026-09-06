@@ -15,7 +15,6 @@ public final class Main {
         String host = "127.0.0.1";
         int port = 8767;
         String dir = null;
-        boolean enableFts = false;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -37,9 +36,6 @@ public final class Main {
                         System.err.println("--port には整数を指定してください");
                         System.exit(2);
                     }
-                    break;
-                case "--fts":
-                    enableFts = true;
                     break;
                 case "-h":
                 case "--help":
@@ -68,7 +64,7 @@ public final class Main {
             }
         }
 
-        LogServer server = new LogServer(logRoot, paths, enableFts);
+        LogServer server = new LogServer(logRoot, paths);
         try {
             server.start(host, port);
         } catch (IOException e) {
@@ -89,7 +85,7 @@ public final class Main {
 
     private static void printUsage() {
         System.out.println("MyBatis Log Viewer");
-        System.out.println("  java -jar mlv-java.jar [--dir <ログディレクトリ>] [--host <host>] [--port <port>] [--fts]");
+        System.out.println("  java -jar mlv-java.jar [--dir <ログディレクトリ>] [--host <host>] [--port <port>]");
         System.out.println("  デフォルト: http://127.0.0.1:8767");
     }
 }

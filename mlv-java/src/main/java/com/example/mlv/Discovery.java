@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public final class Discovery {
@@ -34,7 +35,7 @@ public final class Discovery {
             ".tox", ".mypy_cache", ".pytest_cache", ".mlv"));
 
     public static boolean isLogFile(String name) {
-        String lower = name.toLowerCase();
+        String lower = name.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".gz") || lower.endsWith(".bz2") || lower.endsWith(".xz")) {
             return false;
         }

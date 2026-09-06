@@ -1,6 +1,7 @@
 package com.example.mlv;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -13,7 +14,6 @@ public final class SqlQueryFilter {
     public Pattern threadRe;
     public Pattern sourceRe;
     public Pattern grepRe;
-    public String grepText;
     public Long sinceMillis;
     public Long untilMillis;
     public Integer minElapsed;
@@ -39,7 +39,7 @@ public final class SqlQueryFilter {
         }
         Set<String> result = new HashSet<>();
         for (String part : value.split(",")) {
-            String p = part.trim().toUpperCase();
+            String p = part.trim().toUpperCase(Locale.ROOT);
             if (!p.isEmpty()) {
                 result.add(p);
             }
@@ -66,7 +66,7 @@ public final class SqlQueryFilter {
         if (value == null || value.trim().isEmpty()) {
             return null;
         }
-        String v = value.trim().toLowerCase();
+        String v = value.trim().toLowerCase(Locale.ROOT);
         if ("1".equals(v) || "true".equals(v) || "yes".equals(v) || "complete".equals(v)) {
             return Boolean.TRUE;
         }

@@ -37,7 +37,7 @@ class SqlLogIndexParseTest {
     }
 
     private static void indexLog(Connection conn, Path log) throws Exception {
-        SqlLogIndex.buildIndex(conn, Collections.singletonList(log), null, false);
+        SqlLogIndex.buildIndex(conn, Collections.singletonList(log), null);
     }
 
     private static SqlLogIndex.EntryRow findByMapper(Connection conn, String mapperPattern) throws Exception {
@@ -73,7 +73,7 @@ class SqlLogIndexParseTest {
         assumeSampleExists(sample);
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
 
             SqlQueryFilter incomplete = new SqlQueryFilter();
             incomplete.complete = Boolean.FALSE;
@@ -169,7 +169,7 @@ class SqlLogIndexParseTest {
         assumeSampleExists(sample);
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
 
             SqlQueryFilter tailA = new SqlQueryFilter();
             tailA.mapperRe = SqlQueryFilter.compileRegex("selectById");

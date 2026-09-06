@@ -119,6 +119,8 @@ public final class SqlLogIndex {
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_type_ts "
                     + "ON entries(sql_type, ts_millis, file_id, line_no)");
             st.execute("DROP INDEX IF EXISTS idx_entries_sql_type");
+            // FTS は廃止済み。旧世代の索引に残っていれば掃除する
+            st.execute("DROP TABLE IF EXISTS entries_fts");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_elapsed ON entries(elapsed_ms)");
             ensureEntriesColumns(st);
         }
@@ -142,36 +144,6 @@ public final class SqlLogIndex {
         return false;
     }
 
-    private static final String FTS_SCHEMA =
-            "CREATE VIRTUAL TABLE entries_fts USING fts5(body, content='', tokenize='trigram')";
-
-    public static boolean ftsAvailable(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries_fts'")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        }
-    }
-
-    private static boolean recreateFts(Connection conn) {
-        try (Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS entries_fts");
-            st.execute(FTS_SCHEMA);
-            return true;
-        } catch (SQLException e) {
-            return false;
-        }
-    }
-
-    private static void dropFts(Connection conn) {
-        try (Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS entries_fts");
-        } catch (SQLException ignored) {
-            // ignore
-        }
-    }
-
     private static String fileFingerprint(List<Path> paths) throws IOException {
         List<String> parts = new ArrayList<>(paths.size());
         for (Path path : paths) {
@@ -183,12 +155,12 @@ public final class SqlLogIndex {
         return String.join("\n", parts);
     }
 
-    public static boolean needsRebuild(Connection conn, List<Path> paths, boolean enableFts)
+    public static boolean needsRebuild(Connection conn, List<Path> paths)
             throws SQLException, IOException {
         if (paths.isEmpty()) {
             return false;
         }
-        String fp = indexFingerprint(paths, enableFts);
+        String fp = indexFingerprint(paths);
         String stored = null;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT value FROM meta WHERE key = 'fingerprint'")) {
@@ -201,8 +173,9 @@ public final class SqlLogIndex {
         return !fp.equals(stored);
     }
 
-    private static String indexFingerprint(List<Path> paths, boolean enableFts) throws IOException {
-        return fileFingerprint(paths) + "\nfts:" + (enableFts ? "1" : "0") + "\nschema:4";
+    private static String indexFingerprint(List<Path> paths) throws IOException {
+        // schema:5 で FTS を廃止。旧世代の索引は指紋不一致で再構築される
+        return fileFingerprint(paths) + "\nschema:5";
     }
 
     public static void clearIndex(Connection conn) throws SQLException {
@@ -216,7 +189,6 @@ public final class SqlLogIndex {
 
     private static void abortIncompleteBuild(Connection conn) throws SQLException {
         clearIndex(conn);
-        dropFts(conn);
         try (Statement st = conn.createStatement()) {
             st.execute("DELETE FROM meta WHERE key = 'fingerprint'");
         }
@@ -324,7 +296,6 @@ public final class SqlLogIndex {
         String thread;
         String level;
         boolean complete;
-        StringBuilder bodyBuf;
     }
 
     private static final List<Row> POISON = Collections.emptyList();
@@ -341,29 +312,25 @@ public final class SqlLogIndex {
         }
     }
 
-    public static BuildResult buildIndex(Connection conn, List<Path> paths, ProgressCallback progress,
-            boolean enableFts) throws SQLException, IOException {
+    public static BuildResult buildIndex(Connection conn, List<Path> paths, ProgressCallback progress)
+            throws SQLException, IOException {
         boolean prevAutoCommit = conn.getAutoCommit();
         conn.setAutoCommit(false);
         try {
-            return buildIndexTx(conn, paths, progress, enableFts);
+            return buildIndexTx(conn, paths, progress);
         } finally {
             conn.setAutoCommit(prevAutoCommit);
         }
     }
 
-    private static BuildResult buildIndexTx(Connection conn, List<Path> paths, ProgressCallback progress,
-            boolean enableFts) throws SQLException, IOException {
+    private static BuildResult buildIndexTx(Connection conn, List<Path> paths, ProgressCallback progress)
+            throws SQLException, IOException {
         clearIndex(conn);
-        boolean hasFts = enableFts && recreateFts(conn);
-        if (!enableFts) {
-            dropFts(conn);
-        }
         try (Statement st = conn.createStatement()) {
             st.execute("DELETE FROM meta WHERE key = 'fingerprint'");
         }
         conn.commit();
-        String fp = indexFingerprint(paths, enableFts);
+        String fp = indexFingerprint(paths);
 
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO files (id, path, mtime_secs, size) VALUES (?, ?, ?, ?)")) {
@@ -392,7 +359,7 @@ public final class SqlLogIndex {
             final Path path = paths.get(i);
             pool.submit(() -> {
                 try {
-                    parseFileInto(fileId, path, queue, hasFts, skippedCounter, skippedSamples);
+                    parseFileInto(fileId, path, queue, skippedCounter, skippedSamples);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -413,9 +380,7 @@ public final class SqlLogIndex {
                 "INSERT INTO entries (id, file_id, line_no, byte_offset, end_byte_offset, "
                         + "ts_millis, ts_end_millis, mapper, sql_type, sql_text, parameters, "
                         + "row_count, elapsed_ms, thread, level, complete) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-             PreparedStatement ftsIns = hasFts ? conn.prepareStatement(
-                "INSERT INTO entries_fts (rowid, body) VALUES (?, ?)") : null) {
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             while (true) {
                 List<Row> batch;
                 try {
@@ -429,8 +394,7 @@ public final class SqlLogIndex {
                     break;
                 }
                 for (Row r : batch) {
-                    long id = nextId++;
-                    ins.setLong(1, id);
+                    ins.setLong(1, nextId++);
                     ins.setLong(2, r.fileId);
                     ins.setLong(3, r.lineNo);
                     ins.setLong(4, r.byteOffset);
@@ -455,16 +419,8 @@ public final class SqlLogIndex {
                     ins.setString(15, r.level);
                     ins.setInt(16, r.complete ? 1 : 0);
                     ins.addBatch();
-                    if (ftsIns != null) {
-                        ftsIns.setLong(1, id);
-                        ftsIns.setString(2, r.bodyBuf != null ? r.bodyBuf.toString() : ftsBody(r));
-                        ftsIns.addBatch();
-                    }
                 }
                 ins.executeBatch();
-                if (ftsIns != null) {
-                    ftsIns.executeBatch();
-                }
                 long before = total;
                 total += batch.size();
                 if (before / COMMIT_INTERVAL != total / COMMIT_INTERVAL) {
@@ -529,15 +485,6 @@ public final class SqlLogIndex {
                 Thread.currentThread().interrupt();
             }
         }
-    }
-
-    private static String ftsBody(Row r) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(r.mapper).append(' ').append(r.sqlText);
-        if (r.parameters != null) {
-            sb.append(' ').append(r.parameters);
-        }
-        return sb.toString();
     }
 
     private static void saveSkippedMeta(Connection conn, int count, List<SkippedLine> samples)
@@ -670,7 +617,7 @@ public final class SqlLogIndex {
     }
 
     private static void parseFileInto(long fileId, Path path, BlockingQueue<List<Row>> queue,
-            boolean collectBody, AtomicLong skippedCounter, List<SkippedLine> skippedSamples)
+            AtomicLong skippedCounter, List<SkippedLine> skippedSamples)
             throws IOException, InterruptedException {
         try (InputStream raw = Files.newInputStream(path);
              InputStream in = new BufferedInputStream(raw, 1 << 16);
@@ -693,15 +640,10 @@ public final class SqlLogIndex {
                     String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
                     SqlBlock existing = pendingBlocks.remove(key);
                     if (existing != null) {
-                        batch = flushBlock(existing, reader.lineStart, batch, queue, collectBody);
+                        batch = flushBlock(existing, reader.lineStart, batch, queue);
                     }
                     SqlBlock block = MyBatisBlockParser.startBlock(fileId, lineNo, reader.lineStart, parsed);
                     MyBatisBlockParser.noteRawLineEnd(block, reader.position());
-                    if (collectBody) {
-                        block.bodyBuf = new StringBuilder();
-                        block.bodyBuf.append(new String(
-                                reader.lineBuf, 0, reader.lineLen, StandardCharsets.UTF_8));
-                    }
                     pendingBlocks.put(key, block);
                 } else if (parsed != null) {
                     String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
@@ -711,13 +653,9 @@ public final class SqlLogIndex {
                         MyBatisBlockParser.mergeLine(pending, parsed);
                         MyBatisBlockParser.noteRawLineEnd(pending, reader.position());
                         pending.captureTail = false;
-                        if (collectBody && pending.bodyBuf != null) {
-                            pending.bodyBuf.append(new String(
-                                    reader.lineBuf, 0, reader.lineLen, StandardCharsets.UTF_8));
-                        }
                         if (MyBatisBlockParser.isBlockEnd(parsed)) {
                             pendingBlocks.remove(key);
-                            batch = flushBlock(pending, reader.position(), batch, queue, collectBody);
+                            batch = flushBlock(pending, reader.position(), batch, queue);
                         }
                     } else {
                         for (SqlBlock open : pendingBlocks.values()) {
@@ -748,7 +686,7 @@ public final class SqlLogIndex {
             }
 
             for (SqlBlock pending : pendingBlocks.values()) {
-                batch = flushBlock(pending, reader.position(), batch, queue, collectBody);
+                batch = flushBlock(pending, reader.position(), batch, queue);
             }
             if (!batch.isEmpty()) {
                 queue.put(batch);
@@ -757,13 +695,9 @@ public final class SqlLogIndex {
     }
 
     private static List<Row> flushBlock(SqlBlock block, long endOffset, List<Row> batch,
-            BlockingQueue<List<Row>> queue, boolean collectBody) throws InterruptedException {
+            BlockingQueue<List<Row>> queue) throws InterruptedException {
         MyBatisBlockParser.finalizeBlock(block, endOffset);
-        Row row = toRow(block);
-        if (collectBody && block.bodyBuf != null) {
-            row.bodyBuf = block.bodyBuf;
-        }
-        batch.add(row);
+        batch.add(toRow(block));
         if (batch.size() >= BATCH_SIZE) {
             queue.put(batch);
             return new ArrayList<>(BATCH_SIZE);

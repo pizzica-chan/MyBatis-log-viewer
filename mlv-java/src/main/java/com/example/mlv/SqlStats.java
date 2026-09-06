@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class SqlStats {
@@ -80,7 +81,7 @@ public final class SqlStats {
         if (query == null || query.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        String needle = query.trim().toLowerCase();
+        String needle = query.trim().toLowerCase(Locale.ROOT);
         List<MapperStat> result = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT mapper, COUNT(*), AVG(elapsed_ms), MAX(elapsed_ms) "
@@ -112,7 +113,7 @@ public final class SqlStats {
         if (query == null || query.trim().isEmpty() || limit <= 0) {
             return Collections.emptyList();
         }
-        String needle = query.trim().toLowerCase();
+        String needle = query.trim().toLowerCase(Locale.ROOT);
         List<SlowSql> result = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT e.id, e.ts_millis, e.mapper, e.sql_type, e.sql_text, e.elapsed_ms, f.path, e.line_no "

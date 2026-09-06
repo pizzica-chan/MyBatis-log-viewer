@@ -11,13 +11,12 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Locale;
 
 public final class IndexStore {
 
     private static final long DEFAULT_MAX_AGE_MS = 7L * 24 * 3600 * 1000;
     private static final int DEFAULT_MAX_COUNT = 20;
-    private static final AtomicBoolean CLEANUP_DONE = new AtomicBoolean(false);
 
     private IndexStore() {
     }
@@ -50,7 +49,7 @@ public final class IndexStore {
             byte[] hash = md.digest(normalized.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder(hash.length * 2);
             for (byte b : hash) {
-                sb.append(String.format("%02x", b));
+                sb.append(String.format(Locale.ROOT, "%02x", b));
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {

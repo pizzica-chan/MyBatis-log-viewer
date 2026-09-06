@@ -16,8 +16,6 @@ import com.example.mlv.SqlLogIndex.EntryRow;
 
 public final class SqlQuery {
 
-    private static final String REGEX_META = ".^$*+?()[]{}|\\";
-    private static final int FTS_MIN_LEN = 3;
     private static final String ORDER_BY = " ORDER BY e.ts_millis, e.file_id, e.line_no";
 
     private SqlQuery() {
@@ -45,7 +43,7 @@ public final class SqlQuery {
             throws SQLException {
         StringBuilder where = new StringBuilder("WHERE 1=1");
         List<Object> params = new ArrayList<>();
-        appendConditions(where, params, conn, filter);
+        appendConditions(where, params, filter);
 
         if (!filter.needsJavaFilter()) {
             // 正規表現・grep が無ければ件数もページングも SQL 側で完結できる
@@ -60,7 +58,7 @@ public final class SqlQuery {
 
     /** SQL 側で評価できる条件を WHERE 句に積む。 */
     private static void appendConditions(StringBuilder sql, List<Object> params,
-            Connection conn, SqlQueryFilter filter) throws SQLException {
+            SqlQueryFilter filter) {
         if (filter.sqlTypes != null && !filter.sqlTypes.isEmpty()) {
             sql.append(" AND e.sql_type IN (");
             boolean first = true;
@@ -98,11 +96,6 @@ public final class SqlQuery {
         if (filter.complete != null) {
             sql.append(" AND e.complete = ?");
             params.add(filter.complete ? 1 : 0);
-        }
-        if (filter.grepRe != null && filter.grepText != null
-                && isPlainLiteral(filter.grepText) && SqlLogIndex.ftsAvailable(conn)) {
-            sql.append(" AND e.id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)");
-            params.add(ftsMatchExpr(filter.grepText));
         }
     }
 
@@ -186,22 +179,6 @@ public final class SqlQuery {
             }
         }
         return new Result(total, page);
-    }
-
-    private static boolean isPlainLiteral(String text) {
-        if (text.length() < FTS_MIN_LEN) {
-            return false;
-        }
-        for (int i = 0; i < text.length(); i++) {
-            if (REGEX_META.indexOf(text.charAt(i)) >= 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static String ftsMatchExpr(String literal) {
-        return "\"" + literal.replace("\"", "\"\"") + "\"";
     }
 
     /**

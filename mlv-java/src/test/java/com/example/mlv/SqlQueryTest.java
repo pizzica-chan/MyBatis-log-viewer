@@ -25,7 +25,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             SqlQueryFilter f = new SqlQueryFilter();
             f.mapperRe = SqlQueryFilter.compileRegex("UserMapper");
             SqlQuery.Result r = SqlQuery.querySql(conn, f, 0, 100);
@@ -42,7 +42,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             // 6 完了 + 1 未完了(selectMissing) + 2 末尾インターリーブ = 9
             assertEquals(9, SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 100).total);
         }
@@ -54,7 +54,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
 
             SqlQueryFilter zeroRows = new SqlQueryFilter();
             zeroRows.minRowCount = 0;
@@ -83,7 +83,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             SqlQueryFilter f = new SqlQueryFilter();
             f.mapperRe = SqlQueryFilter.compileRegex("selectById");
             SqlLogIndex.EntryRow row = SqlQuery.querySql(conn, f, 0, 1).page.get(0);
@@ -98,7 +98,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
 
             assertEquals(9, queryBySource(conn, "samples").total);
             assertEquals(9, queryBySource(conn, "mybatis-sample\\.log").total);
@@ -115,7 +115,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             for (SqlQueryFilter pushdown : pushdownFilters()) {
                 SqlQueryFilter scan = copyOf(pushdown);
                 scan.sourceRe = SqlQueryFilter.compileRegex(".");
@@ -136,7 +136,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             SqlQuery.Result all = SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 100);
             SqlQuery.Result second = SqlQuery.querySql(conn, new SqlQueryFilter(), 2, 3);
 

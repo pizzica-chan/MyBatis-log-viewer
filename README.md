@@ -36,7 +36,6 @@ java -jar mlv-java\target\mlv-java.jar
 
 ```powershell
 java -jar mlv-java\target\mlv-java.jar --dir samples --port 8767
-java -jar mlv-java\target\mlv-java.jar --fts
 ```
 
 | オプション | 説明 | デフォルト |
@@ -44,7 +43,6 @@ java -jar mlv-java\target\mlv-java.jar --fts
 | `--dir` | 起動時に読み込むログディレクトリ | — |
 | `--host` | 待ち受けアドレス | `127.0.0.1` |
 | `--port` | 待ち受けポート | `8767` |
-| `--fts` | grep を FTS5 で高速化 | 無効 |
 
 ## Docker で動作確認（ローカル）
 

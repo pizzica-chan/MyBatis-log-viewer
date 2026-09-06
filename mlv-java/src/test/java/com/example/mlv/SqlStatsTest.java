@@ -25,7 +25,7 @@ class SqlStatsTest {
         org.junit.jupiter.api.Assumptions.assumeTrue(sample.toFile().exists());
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, false);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null);
             Summary s = SqlStats.summary(conn);
             assertTrue(s.total >= 6);
             assertFalse(s.bySqlType.isEmpty());

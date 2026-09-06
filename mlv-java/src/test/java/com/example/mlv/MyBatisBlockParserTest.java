@@ -72,6 +72,8 @@ class MyBatisBlockParserTest {
         MyBatisBlockParser.finalizeBlock(block, 9999);
         assertNull(block.rowCount);
         assertFalse(block.complete);
+        // Parameters 行までの 1ms は SQL の実行時間ではないので elapsed は持たせない
+        assertNull(block.elapsedMs);
     }
 
     @Test

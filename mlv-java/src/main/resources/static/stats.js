@@ -134,8 +134,8 @@ function renderByType(items) {
     const row = document.createElement("div");
     row.className = "stats-bar-row";
     row.innerHTML =
-      `<span class="stats-bar-label">${item.sql_type}</span>` +
-      `<div class="stats-bar-track"><div class="stats-bar-fill" style="width:${item.pct || 0}%"></div></div>` +
+      `<span class="stats-bar-label">${escapeHtml(item.sql_type)}</span>` +
+      `<div class="stats-bar-track"><div class="stats-bar-fill" style="width:${item.bar_ratio || 0}%"></div></div>` +
       `<span class="stats-bar-count">${item.count.toLocaleString()}</span>`;
     row.addEventListener("click", () => {
       confirmApplySearchFilter(
@@ -152,7 +152,7 @@ function renderMappers(items) {
   for (const m of items) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="mapper" title="${escapeAttr(m.mapper)}">${escapeHtml(shortMapper(m.mapper))}</td>` +
+      `<td class="mapper" title="${escapeHtml(m.mapper)}">${escapeHtml(shortMapper(m.mapper))}</td>` +
       `<td>${m.count.toLocaleString()}</td>` +
       `<td>${m.avg_elapsed != null ? Math.round(m.avg_elapsed) + " ms" : "-"}</td>` +
       `<td>${m.max_elapsed != null ? m.max_elapsed + " ms" : "-"}</td>`;
@@ -173,9 +173,9 @@ function renderSlow(items) {
     tr.innerHTML =
       `<td>${formatShort(s.timestamp)}</td>` +
       `<td>${s.elapsed_ms} ms</td>` +
-      `<td class="mapper" title="${escapeAttr(s.mapper)}">${escapeHtml(shortMapper(s.mapper))}</td>` +
+      `<td class="mapper" title="${escapeHtml(s.mapper)}">${escapeHtml(shortMapper(s.mapper))}</td>` +
       `<td>${s.sql_type}</td>` +
-      `<td class="sql" title="${escapeAttr(s.sql_preview)}">${escapeHtml(s.sql_preview)}</td>`;
+      `<td class="sql" title="${escapeHtml(s.sql_preview)}">${escapeHtml(s.sql_preview)}</td>`;
     tr.addEventListener("click", () => {
       confirmApplySearchFilter(
         { mapper: escapeRegex(s.mapper), minElapsed: String(s.elapsed_ms) },
@@ -184,23 +184,6 @@ function renderSlow(items) {
     });
     statsEls.slow.appendChild(tr);
   }
-}
-
-function shortMapper(m) {
-  const parts = m.split(".");
-  return parts.length > 2 ? parts.slice(-2).join(".") : m;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeAttr(s) {
-  return String(s).replace(/"/g, "&quot;");
-}
-
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 statsEls.mapperSearchBtn.addEventListener("click", searchMapperStats);

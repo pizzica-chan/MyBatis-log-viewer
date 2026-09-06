@@ -41,7 +41,6 @@ public final class MyBatisBlockParser {
         public long rawEndCap = Long.MAX_VALUE;
         /** 直後のスタックトレース行を raw に含める。 */
         public boolean captureTail;
-        public StringBuilder bodyBuf;
     }
 
     public static boolean isPreparingLine(LogParser.ParsedLine line) {
@@ -144,9 +143,13 @@ public final class MyBatisBlockParser {
         } else {
             block.endByteOffset = endByteOffset;
         }
-        if (block.tsEndMillis >= block.tsMillis) {
+        // 未完了ブロックの tsEndMillis は最後に取り込んだ継続行（多くは Parameters 行）の
+        // 時刻でしかなく SQL の実行時間ではない。統計や遅い SQL を歪めるため elapsed は持たせない
+        if (block.complete && block.tsEndMillis >= block.tsMillis) {
             long elapsed = block.tsEndMillis - block.tsMillis;
             block.elapsedMs = elapsed > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) elapsed;
+        } else if (!block.complete) {
+            block.elapsedMs = null;
         }
         if (block.sqlType == null || block.sqlType.isEmpty()) {
             block.sqlType = detectSqlType(block.sqlText);
