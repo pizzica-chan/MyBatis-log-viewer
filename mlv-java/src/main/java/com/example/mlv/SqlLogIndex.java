@@ -43,8 +43,17 @@ public final class SqlLogIndex {
     /**
      * {@code ANALYZE} が走査する行数の上限。
      *
-     * <p>プランナが必要とするのは列の選択度の桁感なので、全行を数える完全な統計は要らない。
-     * サンプリングなら行数に関係なく数十ミリ秒で終わる。
+     * <p>完全な統計は 250万件で 1.94 秒かかるのに対し、サンプリングなら行数に関係なく
+     * 数十ミリ秒で終わる。ただし精度は落ちる。低カーディナリティな先頭列
+     * （{@code mapper} / {@code sql_type}）では「1 値あたりの行数」がこの値 + 1 の定数に
+     * なり、実データを反映しない（50万件で mapper 62500 → 1001、sql_type 125000 → 1001）。
+     * 値を上げても定数が変わるだけで精度は上がらない。
+     *
+     * <p>その結果 sql_type の等値条件が過度に選択的と見なされ、elapsed_ms と併用する
+     * COUNT などで {@code idx_entries_elapsed} ではなく {@code idx_entries_type_ts} が
+     * 選ばれることがある。どちらが速いかはデータ分布次第で、一覧・ページングの主要な
+     * クエリ形状では完全統計と同じ計画になることを確認している。完全な統計のコストは
+     * 構築時間の約 5% にあたるため、この偏りを許容して採用している。
      */
     private static final int ANALYSIS_LIMIT = 1000;
     private static final long PROGRESS_INTERVAL = 50_000L;
