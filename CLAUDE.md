@@ -20,7 +20,7 @@ Java 8 / JDK 内蔵 HTTP サーバ / SQLite インデックス。実装は `mlv-
 `pom.xml` はリポジトリ直下ではなく `mlv-java/` にある。直下から実行するときは `-f` を付ける。
 
 ```bash
-mvn -f mlv-java/pom.xml test            # テスト（42 件）
+mvn -f mlv-java/pom.xml test            # テスト
 mvn -q -f mlv-java/pom.xml package      # 実行可能 JAR → mlv-java/target/mlv-java.jar
 java -jar mlv-java/target/mlv-java.jar --dir samples
 ```
