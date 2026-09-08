@@ -35,8 +35,9 @@ java -jar mlv-java/target/mlv-java.jar --dir samples
 - ログファイルの mtime + サイズの指紋が一致すれば索引を再利用する。作り直させたいときは
   該当の `tmp/mlv/*.db` を削除する
 - 1 エントリは Preparing / Parameters / Total（または Updates）の複数行ブロックから
-  組み立てる。このパースが重く、**このリポジトリはパース律速**（application-log-viewer は
-  書き込み律速）。性能を変えるときは `.cursor/rules/performance-claims.mdc` に従う
+  組み立てる。このパースが重いため、以前は単一ファイルで大きくパース律速だった。
+  `LogParser` のスレッド判定を最適化して解消し、**索引込みの構築は書き込み律速**に
+  なっている。性能を変えるときは `.cursor/rules/performance-claims.mdc` に従う
 - 索引は取込中に維持する。取込後にまとめて作る方式は実測で遅くなったため採用していない。
   理由と実測値は `SqlLogIndex.initSchema` の索引生成箇所のコメントを参照
 - 一覧 API は行ごとに MyBatis ブロック全文（`raw`）を返す。切り詰めるとハイライトとずれるため、

@@ -145,14 +145,13 @@ public final class SqlLogIndex {
                     + "thread TEXT NOT NULL, level TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 1)");
             // 索引は取込中に維持する。取込前に落として取込後にまとめて作る方式
             // （application-log-viewer で 30% 短縮した手法）も試したが、この実装では
-            // 一貫して遅くなるため採用していない。パーサが 1 エントリあたり 3 行の
-            // ブロックを組み立てるぶん重く、ファイル数が少ないとパースが律速になるため、
-            // 索引維持のコストは writer の空き時間に隠れて実質ゼロになる。取込後の
-            // 一括作成はその空き時間を使えず、純粋な直列の追加時間になってしまう。
-            //   実測 50万件・1ファイル: 索引なし 6.08s / 取込中に維持 5.85s / 取込後に一括 6.90s
-            //   同     50万件・8ファイル: 2.54s / 4.11s / 4.07s（writer 律速になり拮抗）
+            // 一貫して遅くなるため採用していない。この規模では索引 B-tree がページ
+            // キャッシュに収まり行ごとの維持が安いのに対し、取込後の一括作成は
+            // sql_text / parameters を含む幅の広い表を索引 4 本ぶん走査し直すため。
+            //   実測 50万件・1ファイル（LogParser のスレッド判定を最適化した後）:
+            //     索引なし 3.48s / 取込中に維持 3.68s（+0.20s） / 取込後に一括 4.48s（+1.12s）
             // 多数ファイルかつ高行数（8ファイル・240万件）では一括が 4% 有利に転じるが、
-            // 単一ファイルでは 15% 悪化するため、現状の方式を維持している。
+            // 単一ファイルでは約 20% 悪化するため、現状の方式を維持している。
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_ts ON entries(ts_millis, file_id, line_no)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_mapper ON entries(mapper)");
             // SQL 種別で絞りつつ時刻順に並べる一覧検索用。単独列の idx_entries_sql_type を包含する
