@@ -31,6 +31,21 @@ import com.example.mlv.MyBatisBlockParser.SqlBlock;
 public final class SqlLogIndex {
 
     private static final int BATCH_SIZE = 5000;
+    /**
+     * SQLite のページサイズ。
+     *
+     * <p>既定の 4096 より B-tree が浅くなり、取込・索引維持とも軽くなる。
+     * 最初のテーブル作成より前にしか効かないため {@link #initSchema} の先頭で設定する
+     * （既存 DB では無視される。再構築時はファイルごと作り直すので新しい値が効く）。
+     */
+    private static final int PAGE_SIZE = 16384;
+    /**
+     * {@code ANALYZE} が走査する行数の上限。
+     *
+     * <p>プランナが必要とするのは列の選択度の桁感なので、全行を数える完全な統計は要らない。
+     * サンプリングなら行数に関係なく数十ミリ秒で終わる。
+     */
+    private static final int ANALYSIS_LIMIT = 1000;
     private static final long PROGRESS_INTERVAL = 50_000L;
     private static final long COMMIT_INTERVAL = 200_000L;
     private static final int MAX_SKIPPED_SAMPLES = 5;
@@ -101,6 +116,8 @@ public final class SqlLogIndex {
 
     private static void initSchema(Connection conn) throws SQLException, IOException {
         try (Statement st = conn.createStatement()) {
+            // page_size は最初のテーブル作成より前でないと効かないため先頭に置く。
+            st.execute("PRAGMA page_size = " + PAGE_SIZE);
             st.execute("PRAGMA journal_mode = MEMORY");
             st.execute("PRAGMA synchronous = OFF");
             st.execute("PRAGMA temp_store = MEMORY");
@@ -201,25 +218,17 @@ public final class SqlLogIndex {
     /**
      * クエリプランナ用の統計を生成する。
      * これが無いと SQLite が sql_type / ts_millis のインデックスを選び損ねることがある。
+     *
+     * <p>サンプリング（{@link #ANALYSIS_LIMIT}）のため行数に関係なく数十ミリ秒で終わる。
+     * 索引構成を変えると既存の統計は古くなるので、有無を判定せず毎回作り直す。
      */
     public static void updateStatistics(Connection conn) {
         try (Statement st = conn.createStatement()) {
+            st.execute("PRAGMA analysis_limit = " + ANALYSIS_LIMIT);
             st.execute("ANALYZE");
         } catch (SQLException ignored) {
             // 統計が無くても検索自体は動くため失敗は無視する
         }
-    }
-
-    /** 既存インデックスを再利用する場合に、統計が無ければ生成する。 */
-    public static void ensureStatistics(Connection conn) throws SQLException {
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'")) {
-            if (rs.next()) {
-                return;
-            }
-        }
-        updateStatistics(conn);
     }
 
     public static long entryCount(Connection conn) throws SQLException {

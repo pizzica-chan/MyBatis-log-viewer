@@ -253,7 +253,9 @@ public final class LogServer {
                             SqlLogIndex.updateStatistics(newConn);
                             snapshot = captureMeta(newConn);
                         } else {
-                            SqlLogIndex.ensureStatistics(newConn);
+                            // 索引構成が変わると既存の統計は古くなる。サンプリング ANALYZE は
+                            // 行数に関係なく数十ミリ秒で終わるため、有無を判定せず作り直す。
+                            SqlLogIndex.updateStatistics(newConn);
                             snapshot = captureMeta(newConn);
                             loadProgress.set(snapshot.total);
                         }
