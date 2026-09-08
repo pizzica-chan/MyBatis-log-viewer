@@ -144,7 +144,8 @@ public final class SqlLogIndex {
                     + "parameters TEXT, row_count INTEGER, elapsed_ms INTEGER, "
                     + "thread TEXT NOT NULL, level TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 1)");
             // 索引は取込中に維持する。取込前に落として取込後にまとめて作る方式
-            // （application-log-viewer で 30% 短縮した手法）も試したが、この実装では
+            // （application-log-viewer では一括作成のほうが 17% 速かった手法）も試したが、
+            // この実装では
             // 一貫して遅くなるため採用していない。この規模では索引 B-tree がページ
             // キャッシュ（cache_size = -65536 なので約 64MiB）に収まり行ごとの維持が
             // 安いのに対し、取込後の一括作成は
