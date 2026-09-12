@@ -14,10 +14,38 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * 画面の高さを土台にし、余った高さは一覧が受け取る。
+ * min-height だと行数が多いときに一覧が伸びきってページ全体がスクロールし、
+ * 検索条件が画面外へ流れてしまうため、height で抑えて一覧の中だけを送る。
+ * 収まらないときのために overflow は auto（hidden だと下端が切れて操作できなくなる）。
+ */
+html {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--text);
+}
+
+/* タブのパネルは残りの高さを引き継ぎ、中の一覧へ渡す */
+#panel-search,
+#panel-stats {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#panel-search[hidden],
+#panel-stats[hidden] {
+  display: none;
 }
 
 header, .filters, .toolbar, .source-dir {
@@ -160,7 +188,8 @@ label {
   color: var(--muted);
 }
 
-input {
+input,
+select {
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -211,8 +240,21 @@ button {
 .pager { display: flex; align-items: center; gap: 0.5rem; }
 .pager button { background: var(--panel); color: var(--text); }
 
-.table-container { position: relative; }
-.table-wrap { overflow: auto; max-height: calc(100vh - 360px); }
+/*
+ * 一覧は画面の残り高さをそのまま使う。かつて max-height を
+ * calc(100vh - 360px) と決め打ちしていたが、上のフィルタの高さが変わるたびに
+ * 合わなくなる（実際、検索条件欄を圧縮したとき追随できていなかった）。
+ */
+.table-container {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 12rem;
+  display: flex;
+  flex-direction: column;
+}
+
+/* height: 100% ではなく flex で渡す。伸ばされた親への % 解決は環境差が出るため */
+.table-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
 
 .loading-overlay {
   position: absolute;
