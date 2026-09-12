@@ -83,6 +83,18 @@
           <input id="max-row-count" type="number" min="0" placeholder="最大" aria-label="最大件数 (Total/Updates)">
         </div>
       </div>
+      <label>
+        全文検索 (grep・正規表現)
+        <input id="grep" placeholder="INSERT INTO">
+      </label>
+      <label>
+        ログファイル (正規表現)
+        <input id="source" placeholder="application.log">
+      </label>
+      <label>
+        表示件数
+        <input id="page-limit" type="number" min="1" max="1000" step="1" value="200">
+      </label>
       <div class="datetime-filter">
         <span class="field-label">期間</span>
         <div class="datetime-range">
@@ -108,22 +120,10 @@
             <button type="button" id="range-clear" class="chip">クリア</button>
           </div>
         </div>
-        <p id="range-hint" class="range-hint"></p>
       </div>
-      <label>
-        全文検索 (grep・正規表現)
-        <input id="grep" placeholder="INSERT INTO">
-      </label>
-      <label>
-        ログファイル (正規表現)
-        <input id="source" placeholder="application.log">
-      </label>
-      <label>
-        表示件数
-        <input id="page-limit" type="number" min="1" max="1000" step="1" value="200">
-      </label>
       <button id="search">検索</button>
       <button id="reset" type="button">リセット</button>
+      <p id="range-hint" class="range-hint"></p>
     </section>
 
     <section class="toolbar">

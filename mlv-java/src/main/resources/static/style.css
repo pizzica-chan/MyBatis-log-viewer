@@ -78,15 +78,29 @@ header h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
 .file-list { margin: 0.5rem 0 0; color: var(--muted); font-size: 0.75rem; word-break: break-all; }
 
 .filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.5rem 0.75rem;
-  padding: 0.75rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.45rem 0.7rem;
+  padding: 0.7rem 1.25rem;
   background: var(--panel);
 }
 
+/* 項目は詰めて並べ、幅が足りなければ折り返す。数値の範囲指定は入力 2 つぶん広く取る */
+.filters > label {
+  flex: 1 1 8.5rem;
+  min-width: 8.5rem;
+  max-width: 13rem;
+}
+
+.filters > .field-pair {
+  flex: 1 1 11rem;
+  min-width: 11rem;
+  max-width: 15rem;
+}
+
 .filters-toolbar {
-  grid-column: 1 / -1;
+  flex: 1 0 100%;
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -97,7 +111,7 @@ header h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
 .field-pair {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.15rem;
   font-size: 0.75rem;
   color: var(--muted);
 }
@@ -107,17 +121,22 @@ header h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
 .field-pair-sep { flex-shrink: 0; }
 
 .datetime-filter {
-  grid-column: 1 / -1;
+  /* 幅が足りれば検索ボタンと同じ行に並ぶよう、100% 固定にはしない */
+  flex: 0 1 auto;
+  max-width: 100%;
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.85rem;
 }
 
-.field-label, .point-label { font-size: 0.75rem; color: var(--muted); }
-.datetime-range { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 1.25rem; }
-.datetime-point { display: flex; flex-direction: column; gap: 0.25rem; }
-.datetime-inputs { display: flex; gap: 0.5rem; }
-.datetime-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.field-label, .point-label { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.datetime-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.85rem; }
+.datetime-point { display: flex; align-items: center; gap: 0.35rem; }
+.datetime-inputs { display: flex; gap: 0.4rem; }
+.datetime-inputs input[type="date"] { width: 9.25rem; min-width: 9.25rem; }
+.datetime-inputs input[type="time"] { width: 5.5rem; min-width: 5.5rem; }
+.datetime-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
 
 .chip {
   padding: 0.3rem 0.65rem;
@@ -131,18 +150,18 @@ header h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
 
 .chip:hover:not(:disabled) { border-color: var(--accent); }
 .chip:disabled { opacity: 0.45; cursor: not-allowed; }
-.range-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+.range-hint { margin: 0; align-self: center; font-size: 0.75rem; color: var(--muted); }
 
 label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.15rem;
   font-size: 0.75rem;
   color: var(--muted);
 }
 
 input {
-  padding: 0.45rem 0.55rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
@@ -151,7 +170,7 @@ input {
 
 button {
   align-self: end;
-  padding: 0.55rem 1rem;
+  padding: 0.4rem 1rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--accent);
