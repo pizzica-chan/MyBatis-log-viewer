@@ -421,6 +421,7 @@ function updateMeta(data) {
     metaRange = { first: null, last: null };
     els.meta.textContent = "ログファイル未読み込み — ディレクトリを選択してください";
     els.fileList.textContent = "";
+    els.fileList.title = "";
     setBackgroundLoading(false);
     updateRangeUi();
     return;
@@ -428,6 +429,7 @@ function updateMeta(data) {
   if (data.load_error) {
     els.meta.textContent = `読み込みエラー: ${data.load_error}`;
     els.fileList.textContent = data.files.join(" | ");
+    els.fileList.title = data.files.join("\n");
     setBackgroundLoading(false);
     updateRangeUi();
     return;
@@ -437,6 +439,7 @@ function updateMeta(data) {
     const message = `MyBatis SQL をインデックス中... ${data.load_progress.toLocaleString()} 件`;
     els.meta.textContent = `${message} / ファイル ${data.files.length} 件`;
     els.fileList.textContent = data.files.join(" | ");
+    els.fileList.title = data.files.join("\n");
     setBackgroundLoading(true, message);
     scheduleLoadPoll();
     updateRangeUi();
@@ -447,6 +450,7 @@ function updateMeta(data) {
     `${data.total.toLocaleString()} 件の SQL / ファイル ${data.files.length} 件` +
     (data.first ? ` / ${data.first} 〜 ${data.last}` : "");
   els.fileList.textContent = data.files.join(" | ");
+  els.fileList.title = data.files.join("\n");
   updateParseWarning(data);
   setBackgroundLoading(false);
   clearLoadPoll();
