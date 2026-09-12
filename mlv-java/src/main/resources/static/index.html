@@ -67,22 +67,22 @@
           <option value="0">未完了（失敗・中断など）</option>
         </select>
       </label>
-      <label>
-        最小 elapsed (ms)
-        <input id="min-elapsed" type="number" min="0" placeholder="0">
-      </label>
-      <label>
-        最大 elapsed (ms)
-        <input id="max-elapsed" type="number" min="0" placeholder="">
-      </label>
-      <label>
-        最小件数 (Total/Updates)
-        <input id="min-row-count" type="number" min="0" placeholder="0">
-      </label>
-      <label>
-        最大件数 (Total/Updates)
-        <input id="max-row-count" type="number" min="0" placeholder="">
-      </label>
+      <div class="field-pair">
+        <span class="field-label">elapsed (ms)</span>
+        <div class="field-pair-inputs">
+          <input id="min-elapsed" type="number" min="0" placeholder="最小" aria-label="最小 elapsed (ms)">
+          <span class="field-pair-sep">〜</span>
+          <input id="max-elapsed" type="number" min="0" placeholder="最大" aria-label="最大 elapsed (ms)">
+        </div>
+      </div>
+      <div class="field-pair">
+        <span class="field-label">件数 (Total/Updates)</span>
+        <div class="field-pair-inputs">
+          <input id="min-row-count" type="number" min="0" placeholder="最小" aria-label="最小件数 (Total/Updates)">
+          <span class="field-pair-sep">〜</span>
+          <input id="max-row-count" type="number" min="0" placeholder="最大" aria-label="最大件数 (Total/Updates)">
+        </div>
+      </div>
       <div class="datetime-filter">
         <span class="field-label">期間</span>
         <div class="datetime-range">
@@ -100,13 +100,13 @@
               <input id="until-time" type="time" step="60" aria-label="終了時刻">
             </div>
           </div>
-        </div>
-        <div class="datetime-actions">
-          <button type="button" id="range-first-1h" class="chip" disabled>先頭1時間</button>
-          <button type="button" id="range-first-24h" class="chip" disabled>先頭24時間</button>
-          <button type="button" id="range-last-1h" class="chip" disabled>末尾1時間</button>
-          <button type="button" id="range-last-24h" class="chip" disabled>末尾24時間</button>
-          <button type="button" id="range-clear" class="chip">クリア</button>
+          <div class="datetime-actions">
+            <button type="button" id="range-first-1h" class="chip" disabled>先頭1時間</button>
+            <button type="button" id="range-first-24h" class="chip" disabled>先頭24時間</button>
+            <button type="button" id="range-last-1h" class="chip" disabled>末尾1時間</button>
+            <button type="button" id="range-last-24h" class="chip" disabled>末尾24時間</button>
+            <button type="button" id="range-clear" class="chip">クリア</button>
+          </div>
         </div>
         <p id="range-hint" class="range-hint"></p>
       </div>
