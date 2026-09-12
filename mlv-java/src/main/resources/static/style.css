@@ -198,8 +198,9 @@ header h1 { margin: 0; font-size: 1.05rem; white-space: nowrap; }
 .datetime-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.85rem; }
 .datetime-point { display: flex; align-items: center; gap: 0.35rem; }
 .datetime-inputs { display: flex; gap: 0.4rem; }
-.datetime-inputs input[type="date"] { width: 9.25rem; min-width: 9.25rem; }
-.datetime-inputs input[type="time"] { width: 5.5rem; min-width: 5.5rem; }
+/* ネイティブの日付・時刻入力は環境によって必要幅が違う。下限だけ決めて上は許す */
+.datetime-inputs input[type="date"] { min-width: 9.25rem; }
+.datetime-inputs input[type="time"] { min-width: 5.5rem; }
 .datetime-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
 
 .chip {
