@@ -267,7 +267,6 @@ public final class LogServer {
                             }
                             newConn = SqlLogIndex.openOrCreate(root);
                             SqlLogIndex.buildIndex(newConn, paths, loadProgress::set, format);
-                            SqlLogIndex.saveLogFormat(newConn, format);
                             SqlLogIndex.updateStatistics(newConn);
                             snapshot = captureMeta(newConn);
                         } else {

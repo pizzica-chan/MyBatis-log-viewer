@@ -46,6 +46,38 @@ class SqlLogIndexParseTest {
         return SqlQuery.querySql(conn, f, 0, 1).page.get(0);
     }
 
+    /**
+     * 既定以外の書式でも、MyBatis の SQL ブロックを同じように索引化できること。
+     *
+     * <p>書式が変わるのは SQL ブロックを囲むアプリログ側の前置きだけで、ブロックの
+     * 組み立て（Preparing / Parameters / Total）は書式に依らないことを担保する。
+     */
+    @Test
+    void indexesSqlBlocksWithNonDefaultFormat(@TempDir Path tmp) throws Exception {
+        Path log = tmp.resolve("spring.log");
+        // Spring Boot 既定レイアウトの前置きで同じ SQL ブロックを書く
+        Files.write(log, java.util.Arrays.asList(
+                "2026-06-15 08:15:01.705 DEBUG 12345 --- [nio-8080-exec-1] "
+                        + "com.example.mapper.UserMapper.selectById     "
+                        + ": ==>  Preparing: SELECT id FROM users WHERE id = ?",
+                "2026-06-15 08:15:01.706 DEBUG 12345 --- [nio-8080-exec-1] "
+                        + "com.example.mapper.UserMapper.selectById     "
+                        + ": ==> Parameters: 1(Long)",
+                "2026-06-15 08:15:01.708 DEBUG 12345 --- [nio-8080-exec-1] "
+                        + "com.example.mapper.UserMapper.selectById     "
+                        + ": <==      Total: 1"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.BuildResult r = SqlLogIndex.buildIndex(
+                    conn, Collections.singletonList(log), null, LogFormat.SPRING_BOOT);
+            assertEquals(1, r.entryCount, "SQL ブロック 1 件として取り込めること");
+            SqlLogIndex.EntryRow row = findByMapper(conn, "UserMapper");
+            assertEquals("com.example.mapper.UserMapper.selectById", row.mapper);
+            assertEquals("nio-8080-exec-1", row.thread);
+            assertEquals(Integer.valueOf(1), row.rowCount, "Total が拾えていること");
+        }
+    }
+
     // --- 指摘1: Preparing のみで Total が来ない（SQL 失敗） ---
 
     @Test

@@ -232,8 +232,13 @@ public final class SqlLogIndex {
         return fileFingerprint(paths) + "\nschema:5" + "\nformat:" + format.id();
     }
 
-    /** 取り込みに使った書式を meta に残す。再利用時に画面へ出すため。 */
-    static void saveLogFormat(Connection conn, LogFormat format) throws SQLException {
+    /**
+     * 取り込みに使った書式を meta に残す。再利用時に画面へ出すため。
+     *
+     * <p>フィンガープリントと同じトランザクションで書く。別に書くと、途中で落ちたときに
+     * 「索引は有効（fingerprint あり）なのに書式だけ無い」状態になりうるため。
+     */
+    private static void saveLogFormat(Connection conn, LogFormat format) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('log_format', ?)")) {
             ps.setString(1, format.id());
@@ -518,6 +523,7 @@ public final class SqlLogIndex {
             ps.setString(1, fp);
             ps.executeUpdate();
         }
+        saveLogFormat(conn, format);
         saveSkippedMeta(conn, (int) skippedCounter.get(), skippedSamples);
         conn.commit();
 
