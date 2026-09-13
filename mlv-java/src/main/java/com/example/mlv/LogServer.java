@@ -278,12 +278,13 @@ public final class LogServer {
                             loadProgress.set(snapshot.total);
                         }
                     }
-                    // 索引を再利用した場合は、そのとき使った書式を meta から引く（判定と食い違わない）。
-                    LogFormat used = newConn != null ? SqlLogIndex.getLogFormat(newConn) : null;
-                    resolvedFormat = used != null ? used : format;
                     if (isStale(gen)) {
                         return;
                     }
+                    // 索引を再利用した場合は、そのとき使った書式を meta から引く（判定と食い違わない）。
+                    // 世代が古いワーカーが上書きしないよう、isStale の後で代入する。
+                    LogFormat used = newConn != null ? SqlLogIndex.getLogFormat(newConn) : null;
+                    resolvedFormat = used != null ? used : format;
                     synchronized (loadLock) {
                         if (isStale(gen)) {
                             return;

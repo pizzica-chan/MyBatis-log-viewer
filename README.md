@@ -96,7 +96,22 @@ MyBatis 3 標準 DEBUG 出力（SLF4J / Logback 等）:
 2026-06-15 00:19:11.708[thread][DEBUG][com.example.mapper.UserMapper.selectById] - <==      Total: 1
 ```
 
-Java ログヘッダは Tomcat 形式 `[Thread][LEVEL][Logger(FQCN)]` および旧形式に対応しています。
+Java ログヘッダは Tomcat 形式 `[Thread][LEVEL][Logger(FQCN)]` および旧形式に対応しています（既定書式）。
+
+SQL ブロックを囲むアプリログ側の前置き（日時・レベル・ロガー・スレッド）は、
+以下の書式へ切り替えられます。SQL ブロック自体の書式は MyBatis が決めるため対象外です。
+
+| 書式 | 例 |
+|------|-----|
+| `spring-boot` | `2026-06-15 00:19:11.705  INFO 12345 --- [main] c.e.Mapper : ==>  Preparing: ...` |
+| `logback` | `2026-06-15 00:19:11,705 DEBUG [main] com.example.Mapper - ==>  Preparing: ...` |
+| `iso8601` | `2026-06-15T00:19:11.705 DEBUG [main] com.example.Mapper - ==>  Preparing: ...` |
+| `tomcat-juli` | `15-Jun-2026 00:19:11.705 FINE [main] com.example.Mapper.selectById ==>  Preparing: ...` |
+
+既定は自動判定で、先頭ファイルの冒頭 500 行から最もよく一致する書式を選びます。
+判定結果は画面の概要行に出ます。外れた場合はログディレクトリ欄のセレクトで
+明示指定できます（CLI は `--format <id>`）。書式を変えるとインデックスは作り直されます。
+同時に読み込むファイルはすべて同じ書式である前提です。
 
 ## サンプル
 
