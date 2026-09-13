@@ -203,12 +203,12 @@ public final class SqlLogIndex {
         return String.join("\n", parts);
     }
 
-    public static boolean needsRebuild(Connection conn, List<Path> paths)
+    public static boolean needsRebuild(Connection conn, List<Path> paths, LogFormat format)
             throws SQLException, IOException {
         if (paths.isEmpty()) {
             return false;
         }
-        String fp = indexFingerprint(paths);
+        String fp = indexFingerprint(paths, format);
         String stored = null;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT value FROM meta WHERE key = 'fingerprint'")) {
@@ -221,9 +221,37 @@ public final class SqlLogIndex {
         return !fp.equals(stored);
     }
 
-    private static String indexFingerprint(List<Path> paths) throws IOException {
+    /**
+     * ファイル集合 + スキーマ世代 + ログ書式のフィンガープリント。
+     *
+     * <p>書式を変えると解析結果そのものが変わるため、フィンガープリントに含めて
+     * 既存の索引を再利用しないようにする。
+     */
+    private static String indexFingerprint(List<Path> paths, LogFormat format) throws IOException {
         // schema:5 で FTS を廃止。旧世代の索引は指紋不一致で再構築される
-        return fileFingerprint(paths) + "\nschema:5";
+        return fileFingerprint(paths) + "\nschema:5" + "\nformat:" + format.id();
+    }
+
+    /** 取り込みに使った書式を meta に残す。再利用時に画面へ出すため。 */
+    static void saveLogFormat(Connection conn, LogFormat format) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('log_format', ?)")) {
+            ps.setString(1, format.id());
+            ps.executeUpdate();
+        }
+    }
+
+    /** 取り込みに使った書式。未保存（旧バージョンが作った索引）なら {@code null}。 */
+    public static LogFormat getLogFormat(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT value FROM meta WHERE key = 'log_format'")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return LogFormat.byId(rs.getString(1));
+                }
+            }
+        }
+        return null;
     }
 
     public static void clearIndex(Connection conn) throws SQLException {
@@ -352,25 +380,27 @@ public final class SqlLogIndex {
         }
     }
 
-    public static BuildResult buildIndex(Connection conn, List<Path> paths, ProgressCallback progress)
+    public static BuildResult buildIndex(Connection conn, List<Path> paths, ProgressCallback progress,
+            LogFormat format)
             throws SQLException, IOException {
         boolean prevAutoCommit = conn.getAutoCommit();
         conn.setAutoCommit(false);
         try {
-            return buildIndexTx(conn, paths, progress);
+            return buildIndexTx(conn, paths, progress, format);
         } finally {
             conn.setAutoCommit(prevAutoCommit);
         }
     }
 
-    private static BuildResult buildIndexTx(Connection conn, List<Path> paths, ProgressCallback progress)
+    private static BuildResult buildIndexTx(Connection conn, List<Path> paths, ProgressCallback progress,
+            LogFormat format)
             throws SQLException, IOException {
         clearIndex(conn);
         try (Statement st = conn.createStatement()) {
             st.execute("DELETE FROM meta WHERE key = 'fingerprint'");
         }
         conn.commit();
-        String fp = indexFingerprint(paths);
+        String fp = indexFingerprint(paths, format);
 
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO files (id, path, mtime_secs, size) VALUES (?, ?, ?, ?)")) {
@@ -399,7 +429,7 @@ public final class SqlLogIndex {
             final Path path = paths.get(i);
             pool.submit(() -> {
                 try {
-                    parseFileInto(fileId, path, queue, skippedCounter, skippedSamples);
+                    parseFileInto(fileId, path, queue, skippedCounter, skippedSamples, format);
                 } catch (Throwable t) {
                     error.compareAndSet(null, t);
                 } finally {
@@ -657,7 +687,7 @@ public final class SqlLogIndex {
     }
 
     private static void parseFileInto(long fileId, Path path, BlockingQueue<List<Row>> queue,
-            AtomicLong skippedCounter, List<SkippedLine> skippedSamples)
+            AtomicLong skippedCounter, List<SkippedLine> skippedSamples, LogFormat format)
             throws IOException, InterruptedException {
         try (InputStream raw = Files.newInputStream(path);
              InputStream in = new BufferedInputStream(raw, 1 << 16);
@@ -671,9 +701,9 @@ public final class SqlLogIndex {
                 if (reader.isBlankLine()) {
                     continue;
                 }
-                boolean header = LogParser.looksLikeHeader(reader.lineBuf, reader.lineLen);
+                boolean header = LogParser.looksLikeHeader(format, reader.lineBuf, reader.lineLen);
                 LogParser.ParsedLine parsed =
-                        header ? LogParser.parse(reader.lineBuf, reader.lineLen) : null;
+                        header ? LogParser.parse(format, reader.lineBuf, reader.lineLen) : null;
 
                 if (parsed != null && MyBatisBlockParser.isPreparingLine(parsed)) {
                     MyBatisBlockParser.capIncompleteBlocksAt(pendingBlocks.values(), reader.lineStart);

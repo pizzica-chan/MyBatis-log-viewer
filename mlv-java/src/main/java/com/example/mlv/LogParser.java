@@ -7,17 +7,43 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+/**
+ * MyBatis ログ行のパーサー。SQL ブロックを囲むアプリログ側の前置き部分を解析する。
+ *
+ * <p>対応する書式は {@link LogFormat} を参照。既定は
+ * {@code YYYY-MM-DD HH:MM:SS.mmm[Thread][LEVEL][Logger(FQCN)] - Message} と、
+ * Logger と Thread が入れ替わった旧形式（Thread に {@code []} を含む場合も可。
+ * 例: {@code main:[12345] ch[00]}）。
+ *
+ * <p>大容量ログ向けに、まずバイト列だけでヘッダ行らしさを判定し（{@link #looksLikeHeader}）、
+ * 一致した行だけを UTF-8 デコードして本解析する。スタックトレース等の継続行は
+ * デコードを行わずスキップするため、I/O とアロケーションを大幅に削減する。
+ *
+ * <p>書式は取り込み開始時に 1 つへ確定させる前提のため、書式を増やしても
+ * <strong>1 行あたりの判定は 1 書式分だけ</strong>で、継続行の扱いは変わらない。
+ */
 public final class LogParser {
 
     private LogParser() {
     }
 
+    /** ヘッダ行のタイムスタンプ部の固定長（{@code 2026-06-15 00:19:11.705} = 23 文字）。 */
     public static final int TS_LEN = 23;
 
     private static final Set<String> KNOWN_LEVELS = new HashSet<>(Arrays.asList(
             "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "FATAL", "SEVERE"));
 
+    /** 3 番目フィールド末尾とメッセージの区切り（{@code ] - message}）。 */
     private static final String FIELD3_END = "] - ";
+
+    /** logback / log4j / ISO8601 でロガーとメッセージを分ける区切り。 */
+    private static final String LOGGER_END_DASH = " - ";
+
+    /** Spring Boot でロガーとメッセージを分ける区切り。 */
+    private static final String LOGGER_END_COLON = " : ";
+
+    /** Spring Boot のプロセス ID とスレッドの間に入る目印。 */
+    private static final String SPRING_MARKER = "---";
 
     /** スレッド名らしさの判定。事前ふるいとの等価性を試験するためパッケージ可視。 */
     static final Pattern THREAD_HINT = Pattern.compile(
@@ -25,6 +51,7 @@ public final class LogParser {
                     + "|ajp-|http-nio-|https-nio-|catalina-|-exec-\\d+$)",
             Pattern.CASE_INSENSITIVE);
 
+    /** 解析結果（エントリ先頭行）。 */
     public static final class ParsedLine {
         public final long tsMillis;
         public final String logger;
@@ -41,37 +68,97 @@ public final class LogParser {
         }
     }
 
-    public static boolean looksLikeHeader(byte[] b, int len) {
+    /**
+     * バイト列だけでヘッダ行の可能性を高速判定する（UTF-8 デコード前）。
+     *
+     * <p>書式ごとに違うのは 3 バイトだけ（日付と時刻の区切り・ミリ秒の区切り・
+     * タイムスタンプ直後）なので、そこを先に見てから数字 20 文字を走査する。
+     * 継続行はたいてい先頭の数バイトで落ちるため、この順序のほうが速い。
+     */
+    public static boolean looksLikeHeader(LogFormat fmt, byte[] b, int len) {
         if (len < TS_LEN + 1) {
             return false;
         }
+        switch (fmt) {
+            case DEFAULT:
+                // 2026-06-15 00:19:11.705[
+                return b[10] == ' ' && b[19] == '.' && b[23] == '[' && looksLikeTimestamp(b);
+            case SPRING_BOOT:
+                // 2026-06-15 00:19:11.705  INFO …
+                return b[10] == ' ' && b[19] == '.' && b[23] == ' ' && looksLikeTimestamp(b);
+            case LOGBACK:
+                // 2026-06-15 00:19:11,705 INFO … / ミリ秒の区切りは . でも , でも可
+                return b[10] == ' ' && (b[19] == '.' || b[19] == ',') && b[23] == ' '
+                        && looksLikeTimestamp(b);
+            case ISO8601:
+                // 2026-06-15T00:19:11.705 INFO …
+                return b[10] == 'T' && b[19] == '.' && b[23] == ' ' && looksLikeTimestamp(b);
+            default:
+                return false;
+        }
+    }
+
+    /** 既定書式での判定。 */
+    public static boolean looksLikeHeader(byte[] b, int len) {
+        return looksLikeHeader(LogFormat.DEFAULT, b, len);
+    }
+
+    /**
+     * タイムスタンプ部の数字と固定の区切りを確認する。
+     * 位置 10（日付と時刻）と 19（ミリ秒）は書式ごとに違うため、ここでは見ない。
+     */
+    private static boolean looksLikeTimestamp(byte[] b) {
         return isDigit(b[0]) && isDigit(b[1]) && isDigit(b[2]) && isDigit(b[3])
                 && b[4] == '-' && isDigit(b[5]) && isDigit(b[6])
                 && b[7] == '-' && isDigit(b[8]) && isDigit(b[9])
-                && b[10] == ' ' && isDigit(b[11]) && isDigit(b[12])
+                && isDigit(b[11]) && isDigit(b[12])
                 && b[13] == ':' && isDigit(b[14]) && isDigit(b[15])
                 && b[16] == ':' && isDigit(b[17]) && isDigit(b[18])
-                && b[19] == '.' && isDigit(b[20]) && isDigit(b[21]) && isDigit(b[22])
-                && b[23] == '[';
+                && isDigit(b[20]) && isDigit(b[21]) && isDigit(b[22]);
     }
 
-    public static ParsedLine parse(byte[] b, int len) {
-        if (!looksLikeHeader(b, len)) {
+    /**
+     * バイト列を 1 ヘッダ行として解析する。ヘッダでなければ {@code null}。
+     *
+     * @param fmt 適用する書式
+     * @param b   行バイト列（改行を含んでいてよい）
+     * @param len 有効長
+     */
+    public static ParsedLine parse(LogFormat fmt, byte[] b, int len) {
+        if (!looksLikeHeader(fmt, b, len)) {
             return null;
         }
+        // 4 書式とも数字の位置は同じで、parseLogTimestamp は区切り文字を見ないため共通に使える。
         long ts = TimeUtil.parseLogTimestamp(b, 0);
         if (ts == Long.MIN_VALUE) {
             return null;
         }
+        // 末尾の CR/LF を除外
         int end = len;
         while (end > TS_LEN && (b[end - 1] == '\n' || b[end - 1] == '\r')) {
             end--;
         }
+        // タイムスタンプ直後から本文をデコード
         String rest = new String(b, TS_LEN, end - TS_LEN, StandardCharsets.UTF_8);
-        return parseRest(ts, rest);
+        switch (fmt) {
+            case DEFAULT:
+                return parseDefaultRest(ts, rest);
+            case SPRING_BOOT:
+                return parseSpringBootRest(ts, rest);
+            case LOGBACK:
+            case ISO8601:
+                return parseBracketThreadRest(ts, rest);
+            default:
+                return null;
+        }
     }
 
-    private static ParsedLine parseRest(long ts, String rest) {
+    /** 既定書式での解析。 */
+    public static ParsedLine parse(byte[] b, int len) {
+        return parse(LogFormat.DEFAULT, b, len);
+    }
+
+    private static ParsedLine parseDefaultRest(long ts, String rest) {
         if (rest.isEmpty() || rest.charAt(0) != '[') {
             return null;
         }
@@ -85,6 +172,8 @@ public final class LogParser {
             return null;
         }
         int s3 = e2 + 2;
+        // 3 番目フィールド内に [] がネストする場合があるため、単純な ']' ではなく
+        // 固定区切り "] - " で末尾を特定する（O(n) の indexOf 1 回、括弧走査より軽量）。
         int e3 = rest.indexOf(FIELD3_END, s3);
         if (e3 < 0) {
             return null;
@@ -111,17 +200,145 @@ public final class LogParser {
                 logger = field1;
             }
         } else if (field3.indexOf('.') >= 0 && field1.indexOf('.') < 0) {
+            // Tomcat: [Thread][LEVEL][Logger(FQCN)]
             logger = field3;
             thread = field1;
         } else if (field1.indexOf('.') >= 0 && field3.indexOf('.') < 0) {
+            // 旧形式: [Logger(FQCN)][LEVEL][Thread]
             logger = field1;
             thread = field3;
         } else {
-            // 標準 Tomcat 形式 [thread][LEVEL][logger] を優先
+            // 判別不能時は Tomcat 形式 [thread][LEVEL][logger] を優先
             logger = field3;
             thread = field1;
         }
         return new ParsedLine(ts, logger, level, thread, message);
+    }
+
+    /**
+     * Spring Boot 既定レイアウトの本文を解析する。
+     *
+     * <pre>
+     *   INFO 12345 --- [nio-8080-exec-1] c.e.Hoge                 : Message
+     * </pre>
+     *
+     * <p>プロセス ID は出力しない設定もあるため任意とし、{@code ---} を必須の目印にする。
+     * ロガーは {@code %-40.40logger} で右側を空白詰めされるので、区切り {@code " : "} までを
+     * 取って前後の空白を落とす。
+     */
+    private static ParsedLine parseSpringBootRest(long ts, String rest) {
+        int i = skipSpaces(rest, 0);
+        int levelEnd = wordEnd(rest, i);
+        if (levelEnd == i) {
+            return null;
+        }
+        String level = rest.substring(i, levelEnd).toUpperCase(Locale.ROOT);
+        if (!KNOWN_LEVELS.contains(level)) {
+            return null;
+        }
+        i = skipSpaces(rest, levelEnd);
+        // プロセス ID（任意）
+        while (i < rest.length() && rest.charAt(i) >= '0' && rest.charAt(i) <= '9') {
+            i++;
+        }
+        i = skipSpaces(rest, i);
+        if (!rest.startsWith(SPRING_MARKER, i)) {
+            return null;
+        }
+        i = skipSpaces(rest, i + SPRING_MARKER.length());
+        if (i >= rest.length() || rest.charAt(i) != '[') {
+            return null;
+        }
+        int threadEnd = rest.indexOf(']', i + 1);
+        if (threadEnd < 0) {
+            return null;
+        }
+        String thread = rest.substring(i + 1, threadEnd).trim();
+        int loggerStart = skipSpaces(rest, threadEnd + 1);
+        int sep = rest.indexOf(LOGGER_END_COLON, loggerStart);
+        if (sep < 0) {
+            return null;
+        }
+        String logger = rest.substring(loggerStart, sep).trim();
+        String message = rest.substring(sep + LOGGER_END_COLON.length());
+        return new ParsedLine(ts, logger, level, thread, message);
+    }
+
+    /**
+     * logback / log4j / ISO8601 の本文を解析する。レベルとスレッドはどちらが先でもよい。
+     *
+     * <pre>
+     *  INFO  [main] com.example.Hoge - Message   （log4j に多い並び）
+     *  [main] INFO  com.example.Hoge - Message   （logback 既定の並び）
+     * </pre>
+     */
+    private static ParsedLine parseBracketThreadRest(long ts, String rest) {
+        int i = skipSpaces(rest, 0);
+        if (i >= rest.length()) {
+            return null;
+        }
+        String level;
+        String thread;
+        if (rest.charAt(i) == '[') {
+            // [thread] LEVEL logger - message
+            int threadEnd = rest.indexOf(']', i + 1);
+            if (threadEnd < 0) {
+                return null;
+            }
+            thread = rest.substring(i + 1, threadEnd).trim();
+            i = skipSpaces(rest, threadEnd + 1);
+            int levelEnd = wordEnd(rest, i);
+            if (levelEnd == i) {
+                return null;
+            }
+            level = rest.substring(i, levelEnd).toUpperCase(Locale.ROOT);
+            i = levelEnd;
+        } else {
+            // LEVEL [thread] logger - message
+            int levelEnd = wordEnd(rest, i);
+            if (levelEnd == i) {
+                return null;
+            }
+            level = rest.substring(i, levelEnd).toUpperCase(Locale.ROOT);
+            i = skipSpaces(rest, levelEnd);
+            if (i >= rest.length() || rest.charAt(i) != '[') {
+                return null;
+            }
+            int threadEnd = rest.indexOf(']', i + 1);
+            if (threadEnd < 0) {
+                return null;
+            }
+            thread = rest.substring(i + 1, threadEnd).trim();
+            i = threadEnd + 1;
+        }
+        if (!KNOWN_LEVELS.contains(level)) {
+            return null;
+        }
+        int loggerStart = skipSpaces(rest, i);
+        int sep = rest.indexOf(LOGGER_END_DASH, loggerStart);
+        if (sep < 0) {
+            return null;
+        }
+        String logger = rest.substring(loggerStart, sep).trim();
+        String message = rest.substring(sep + LOGGER_END_DASH.length());
+        return new ParsedLine(ts, logger, level, thread, message);
+    }
+
+    private static int skipSpaces(String s, int from) {
+        int i = from;
+        while (i < s.length() && s.charAt(i) == ' ') {
+            i++;
+        }
+        return i;
+    }
+
+    /** {@code from} から空白または文字列末尾までの位置を返す。 */
+    private static int wordEnd(String s, int from) {
+        int i = from;
+        while (i < s.length() && s.charAt(i) != ' ') {
+            i++;
+        }
+        return i;
     }
 
     /**
@@ -146,9 +363,15 @@ public final class LogParser {
         return THREAD_HINT.matcher(s).find();
     }
 
+    /** テスト・利便用の文字列版（既定書式）。 */
     public static ParsedLine parseLine(String line) {
+        return parseLine(LogFormat.DEFAULT, line);
+    }
+
+    /** テスト・利便用の文字列版。 */
+    public static ParsedLine parseLine(LogFormat fmt, String line) {
         byte[] b = line.getBytes(StandardCharsets.UTF_8);
-        return parse(b, b.length);
+        return parse(fmt, b, b.length);
     }
 
     private static boolean isDigit(byte c) {

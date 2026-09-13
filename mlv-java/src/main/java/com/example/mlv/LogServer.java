@@ -104,9 +104,22 @@ public final class LogServer {
 
     private final Map<String, byte[]> staticCache = new HashMap<>();
 
+    /**
+     * 利用者が明示指定した書式。{@code null} なら取り込みのたびに自動判定する。
+     * 自動判定が外れたときに UI から上書きできるようにするための逃げ道。
+     */
+    private volatile LogFormat requestedFormat;
+    /** 直近の取り込みで実際に使った書式。画面に出すために保持する。 */
+    private volatile LogFormat resolvedFormat = LogFormat.DEFAULT;
+
     public LogServer(Path logRoot, List<Path> logPaths) {
+        this(logRoot, logPaths, null);
+    }
+
+    public LogServer(Path logRoot, List<Path> logPaths, LogFormat requestedFormat) {
         this.logRoot = logRoot;
         this.logPaths = logPaths != null ? logPaths : Collections.<Path>emptyList();
+        this.requestedFormat = requestedFormat;
     }
 
     public void start(String host, int port) throws IOException {
@@ -200,6 +213,10 @@ public final class LogServer {
         }
         final Path root = logRoot;
         final List<Path> paths = new ArrayList<>(logPaths);
+        // 明示指定が無ければ先頭ファイルの冒頭から判定する。判定は取り込み開始時の 1 回だけで、
+        // 1 行あたりの処理は確定した 1 書式ぶんしか走らない。
+        final LogFormat requested = requestedFormat;
+        final LogFormat format = requested != null ? requested : LogFormat.detect(paths);
 
         Thread worker = new Thread(new Runnable() {
             @Override
@@ -239,7 +256,7 @@ public final class LogServer {
                             newConn = SqlLogIndex.openOrCreate(root);
                             SqlLogIndex.clearIndex(newConn);
                             snapshot = MetaSnapshot.EMPTY;
-                        } else if (SqlLogIndex.needsRebuild(newConn, paths)) {
+                        } else if (SqlLogIndex.needsRebuild(newConn, paths, format)) {
                             if (isStale(gen)) {
                                 return;
                             }
@@ -249,7 +266,8 @@ public final class LogServer {
                                 return;
                             }
                             newConn = SqlLogIndex.openOrCreate(root);
-                            SqlLogIndex.buildIndex(newConn, paths, loadProgress::set);
+                            SqlLogIndex.buildIndex(newConn, paths, loadProgress::set, format);
+                            SqlLogIndex.saveLogFormat(newConn, format);
                             SqlLogIndex.updateStatistics(newConn);
                             snapshot = captureMeta(newConn);
                         } else {
@@ -260,6 +278,9 @@ public final class LogServer {
                             loadProgress.set(snapshot.total);
                         }
                     }
+                    // 索引を再利用した場合は、そのとき使った書式を meta から引く（判定と食い違わない）。
+                    LogFormat used = newConn != null ? SqlLogIndex.getLogFormat(newConn) : null;
+                    resolvedFormat = used != null ? used : format;
                     if (isStale(gen)) {
                         return;
                     }
@@ -394,6 +415,10 @@ public final class LogServer {
         payload.addProperty("total", loading ? progress : meta.total);
         payload.addProperty("first", meta.first);
         payload.addProperty("last", meta.last);
+        LogFormat usedFormat = resolvedFormat;
+        payload.addProperty("log_format", usedFormat.id());
+        payload.addProperty("log_format_name", usedFormat.displayName());
+        payload.addProperty("log_format_auto", requestedFormat == null);
         if (!loading && meta.skippedLines > 0) {
             payload.addProperty("skipped_lines", meta.skippedLines);
             JsonArray samples = new JsonArray();
@@ -476,10 +501,14 @@ public final class LogServer {
     private void handleLoad(HttpExchange ex) throws IOException {
         String body = readBody(ex);
         String directory = "";
+        String formatId = "";
         try {
             JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
             if (obj.has("directory") && !obj.get("directory").isJsonNull()) {
                 directory = obj.get("directory").getAsString();
+            }
+            if (obj.has("format") && !obj.get("format").isJsonNull()) {
+                formatId = obj.get("format").getAsString();
             }
         } catch (RuntimeException e) {
             sendErrorJson(ex, 400, "JSON を解釈できません");
@@ -488,6 +517,15 @@ public final class LogServer {
         if (directory.isEmpty()) {
             sendErrorJson(ex, 400, "directory を指定してください");
             return;
+        }
+        // "auto"（または未指定）は自動判定。未知の id はエラーにして黙って既定へ落とさない。
+        LogFormat format = null;
+        if (!formatId.isEmpty() && !"auto".equals(formatId)) {
+            format = LogFormat.byId(formatId);
+            if (format == null) {
+                sendErrorJson(ex, 400, "未知のログ書式です: " + formatId);
+                return;
+            }
         }
         Path root = PathUtil.resolve(directory);
         if (!Files.isDirectory(root)) {
@@ -502,6 +540,7 @@ public final class LogServer {
             sendErrorJson(ex, 400, e.getMessage());
             return;
         }
+        this.requestedFormat = format;
         synchronized (loadLock) {
             this.logRoot = root;
             this.logPaths = paths;

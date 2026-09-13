@@ -125,6 +125,17 @@ header h1 { margin: 0; font-size: 1.05rem; white-space: nowrap; }
 }
 .dir-input { display: flex; gap: 0.5rem; }
 .dir-input input { flex: 1; min-width: 0; }
+
+/* 書式セレクト。input と同じ見た目に揃える */
+#log-format {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.75rem;
+}
 #browse, #load-dir { background: var(--panel); color: var(--text); }
 #load-dir { background: var(--accent); color: #fff; }
 /*

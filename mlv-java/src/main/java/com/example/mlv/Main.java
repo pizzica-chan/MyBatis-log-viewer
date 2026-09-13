@@ -15,6 +15,7 @@ public final class Main {
         String host = "127.0.0.1";
         int port = 8767;
         String dir = null;
+        LogFormat logFormat = null;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -37,6 +38,18 @@ public final class Main {
                         System.exit(2);
                     }
                     break;
+                case "--format": {
+                    String value = requireValue(args, ++i, "--format");
+                    if (!"auto".equals(value)) {
+                        logFormat = LogFormat.byId(value);
+                        if (logFormat == null) {
+                            System.err.println("不明なログ書式: " + value);
+                            printUsage();
+                            System.exit(2);
+                        }
+                    }
+                    break;
+                }
                 case "-h":
                 case "--help":
                     printUsage();
@@ -64,7 +77,7 @@ public final class Main {
             }
         }
 
-        LogServer server = new LogServer(logRoot, paths);
+        LogServer server = new LogServer(logRoot, paths, logFormat);
         try {
             server.start(host, port);
         } catch (IOException e) {
@@ -85,7 +98,14 @@ public final class Main {
 
     private static void printUsage() {
         System.out.println("MyBatis Log Viewer");
-        System.out.println("  java -jar mlv-java.jar [--dir <ログディレクトリ>] [--host <host>] [--port <port>]");
+        System.out.println("  java -jar mlv-java.jar [--dir <ログディレクトリ>] [--host <host>] "
+                + "[--port <port>] [--format <id>]");
         System.out.println("  デフォルト: http://127.0.0.1:8767");
+        StringBuilder ids = new StringBuilder();
+        for (LogFormat f : LogFormat.values()) {
+            ids.append(" / ").append(f.id());
+        }
+        System.out.println("  --format ログ書式を固定する（省略時は先頭ファイルから自動判定）");
+        System.out.println("          auto" + ids);
     }
 }
