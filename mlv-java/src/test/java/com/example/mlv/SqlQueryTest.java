@@ -208,4 +208,129 @@ class SqlQueryTest {
     private static void assumeTrue(boolean condition, String message) {
         org.junit.jupiter.api.Assumptions.assumeTrue(condition, message);
     }
+
+    /**
+     * grep のリテラル経路（バイト列照合）と正規表現経路が同じ結果を返すこと。
+     * 大文字小文字・多バイト・3 文字未満・SQL 本文やパラメータ内の語で確かめる。
+     */
+    @Test
+    void grepLiteralPathMatchesRegexPath() throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            String[] words = {"SELECT", "select", "users", "Parameters", "id", "ユーザー",
+                "alice@example.com", "見つからない語"};
+            for (String word : words) {
+                SqlQueryFilter literal = new SqlQueryFilter();
+                literal.grepRe = SqlQueryFilter.compileRegex(word);
+                literal.grepText = word;
+                SqlQueryFilter regex = new SqlQueryFilter();
+                regex.grepRe = SqlQueryFilter.compileRegex(
+                        "(?:" + java.util.regex.Pattern.quote(word) + ")");
+                regex.grepText = null; // メタ文字を含むので正規表現経路になる
+
+                SqlQuery.Result byLiteral = SqlQuery.querySql(conn, literal, 0, 100);
+                SqlQuery.Result byRegex = SqlQuery.querySql(conn, regex, 0, 100);
+                assertEquals(byRegex.total, byLiteral.total, word);
+                assertEquals(byRegex.page.size(), byLiteral.page.size(), word);
+                for (int i = 0; i < byRegex.page.size(); i++) {
+                    assertEquals(byRegex.page.get(i).id, byLiteral.page.get(i).id, word);
+                }
+            }
+        }
+    }
+
+    /** メタ文字を含む指定は、リテラル照合ではなく正規表現として扱うこと。 */
+    @Test
+    void grepWithMetaCharsUsesRegexPath() throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            // . を任意の 1 文字として解釈しないと 0 件になる指定
+            SqlQueryFilter f = new SqlQueryFilter();
+            f.grepRe = SqlQueryFilter.compileRegex("SELEC.");
+            f.grepText = "SELEC.";
+            assertTrue(SqlQuery.querySql(conn, f, 0, 100).total > 0,
+                    "メタ文字は正規表現として扱う");
+        }
+    }
+
+    /** ASCII だけを畳むこと（多バイト文字を取り違えない）。 */
+    @Test
+    void containsBytesIgnoreAsciiCaseFoldsOnlyAscii() {
+        String haystack = "ぢから ABC";
+        byte[] hay = haystack.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (String needle : new String[] {"abc", "ABC", "ぢ", "あ", "から"}) {
+            boolean byRegex = java.util.regex.Pattern
+                    .compile(java.util.regex.Pattern.quote(needle),
+                            java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(haystack).find();
+            byte[] lower = SqlLogIndex.toLowerAscii(
+                    needle.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(byRegex, SqlLogIndex.containsBytesIgnoreAsciiCase(hay, hay.length, lower),
+                    needle);
+        }
+    }
+
+    /** ログファイルを読めなくなったら、黙って結果を欠けさせずエラーにすること。 */
+    @Test
+    void readFailureIsReportedNotSilentlyIgnored(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws Exception {
+        Path sample = sampleLog();
+        assumeTrue(sample.toFile().exists(), "sample log not found");
+        Path copy = tmp.resolve("app.log");
+        java.nio.file.Files.copy(sample, copy);
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(PathUtil.resolve(copy)), null,
+                    LogFormat.DEFAULT);
+            java.nio.file.Files.delete(copy);
+            SqlQueryFilter f = new SqlQueryFilter();
+            f.grepRe = SqlQueryFilter.compileRegex("SELECT");
+            f.grepText = "SELECT";
+            assertThrows(java.sql.SQLException.class, () -> SqlQuery.querySql(conn, f, 0, 100));
+        }
+    }
+
+    /**
+     * 前方向にまとめ読みするリーダが、都度読みと同じ内容を返すこと。
+     * 戻る要求、窓（64 KiB）に収まらない大きさ、ファイル末尾を確かめる。
+     */
+    @Test
+    void sequentialRawReaderMatchesDirectReads(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws Exception {
+        byte[] data = new byte[200_000];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i % 251);
+        }
+        Path file = tmp.resolve("raw.bin");
+        java.nio.file.Files.write(file, data);
+
+        try (SqlLogIndex.SequentialRawReader reader =
+                new SqlLogIndex.SequentialRawReader(file.toString())) {
+            byte[] buf = new byte[300_000];
+            for (long offset = 0; offset < 150_000; offset += 1000) {
+                int n = reader.read(offset, 500, buf);
+                assertEquals(500, n);
+                assertArrayEquals(java.util.Arrays.copyOfRange(data, (int) offset, (int) offset + 500),
+                        java.util.Arrays.copyOf(buf, n));
+            }
+            int n = reader.read(10, 100, buf); // 戻る（窓の外）
+            assertEquals(100, n);
+            assertArrayEquals(java.util.Arrays.copyOfRange(data, 10, 110),
+                    java.util.Arrays.copyOf(buf, n));
+            n = reader.read(1000, 150_000, buf); // 窓に収まらない大きさ
+            assertEquals(150_000, n);
+            assertArrayEquals(java.util.Arrays.copyOfRange(data, 1000, 151_000),
+                    java.util.Arrays.copyOf(buf, n));
+            n = reader.read(data.length - 10, 100, buf); // 末尾は読めたぶんだけ
+            assertEquals(10, n);
+            assertArrayEquals(java.util.Arrays.copyOfRange(data, data.length - 10, data.length),
+                    java.util.Arrays.copyOf(buf, n));
+        }
+    }
 }

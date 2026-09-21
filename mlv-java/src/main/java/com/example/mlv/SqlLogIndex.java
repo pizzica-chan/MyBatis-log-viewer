@@ -1,6 +1,8 @@
 package com.example.mlv;
 
 import java.io.BufferedInputStream;
+import java.io.Closeable;
+import java.io.RandomAccessFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -920,5 +922,132 @@ public final class SqlLogIndex {
 
     static String selectBase() {
         return SELECT_BASE;
+    }
+
+    /**
+     * 1 ファイルを前方向にまとめ読みするリーダ。
+     *
+     * <p>エントリごとに {@code seek} + {@code read} を呼ぶと、1 件あたりシステムコールが
+     * 2 回かかる。取り出す順序はおおむねファイルの先頭から末尾へ進むので、窓（既定 64 KiB）に
+     * まとめて読んでおき、そこから切り出す。戻る要求や窓に収まらない大きなエントリが来たら
+     * その場で読み直すので、返る内容は都度読んだ場合と同じになる。
+     *
+     * <p>実測は {@code docs/performance-report.md} を参照。
+     */
+    static final class SequentialRawReader implements Closeable {
+        /** 窓の大きさ。MyBatis の 1 ブロックが数百バイト〜数 KB なので 64 KiB でまとめ読みできる。 */
+        private static final int WINDOW_BYTES = 1 << 16;
+
+        private final RandomAccessFile file;
+        private final byte[] window = new byte[WINDOW_BYTES];
+        /** 窓が指すファイル上の位置。{@code -1} は窓が無効。 */
+        private long windowStart = -1;
+        private int windowLen;
+
+        SequentialRawReader(String path) throws IOException {
+            this.file = new RandomAccessFile(path, "r");
+        }
+
+        /**
+         * {@code offset} から {@code len} バイトを {@code into} へ読み出し、実際に読めた
+         * バイト数を返す（ファイル末尾なら要求より少なくなる）。
+         */
+        int read(long offset, int len, byte[] into) throws IOException {
+            if (len <= 0) {
+                return 0;
+            }
+            if (len > window.length) {
+                // 窓に収まらないエントリ（長い SQL 等）は直接読む
+                file.seek(offset);
+                int n = readFully(into, len);
+                windowStart = -1;
+                return n;
+            }
+            if (windowStart < 0 || offset < windowStart
+                    || offset + len > windowStart + windowLen) {
+                file.seek(offset);
+                windowStart = offset;
+                windowLen = readFully(window, window.length);
+            }
+            int from = (int) (offset - windowStart);
+            int n = Math.min(len, windowLen - from);
+            if (n <= 0) {
+                return 0;
+            }
+            System.arraycopy(window, from, into, 0, n);
+            return n;
+        }
+
+        private int readFully(byte[] buf, int len) throws IOException {
+            int filled = 0;
+            while (filled < len) {
+                int n = file.read(buf, filled, len - filled);
+                if (n < 0) {
+                    break;
+                }
+                filled += n;
+            }
+            return filled;
+        }
+
+        @Override
+        public void close() throws IOException {
+            file.close();
+        }
+    }
+
+    /** {@link SequentialRawReader} をまとめて閉じる。 */
+    static void closeReaders(Map<String, SequentialRawReader> readers) {
+        if (readers == null) {
+            return;
+        }
+        for (SequentialRawReader r : readers.values()) {
+            try {
+                r.close();
+            } catch (IOException ignored) {
+                // クローズ失敗は無視
+            }
+        }
+    }
+
+    /**
+     * バイト列のまま部分一致を探す（ASCII の大文字小文字を無視する）。
+     *
+     * <p>grep は {@link java.util.regex.Pattern#CASE_INSENSITIVE} だけを立てるので、
+     * 畳まれるのは ASCII の範囲だけ（Unicode を畳むには {@code UNICODE_CASE} が要る）。
+     * UTF-8 では ASCII のバイトは ASCII 文字としてしか現れないため、ASCII だけを畳んで
+     * 比べれば、デコードしてから照合した場合と同じ結果になる。
+     *
+     * @param lowerNeedle あらかじめ ASCII を小文字にした探す側のバイト列
+     */
+    static boolean containsBytesIgnoreAsciiCase(byte[] haystack, int len, byte[] lowerNeedle) {
+        if (lowerNeedle.length == 0) {
+            return true;
+        }
+        int last = len - lowerNeedle.length;
+        outer:
+        for (int i = 0; i <= last; i++) {
+            for (int j = 0; j < lowerNeedle.length; j++) {
+                if (toLowerAscii(haystack[i + j]) != lowerNeedle[j]) {
+                    continue outer;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** ASCII の大文字だけを小文字にする（多バイト文字のバイトはそのまま）。 */
+    static byte toLowerAscii(byte b) {
+        return (b >= 'A' && b <= 'Z') ? (byte) (b + ('a' - 'A')) : b;
+    }
+
+    /** ASCII の大文字だけを小文字にしたバイト列を返す。 */
+    static byte[] toLowerAscii(byte[] bytes) {
+        byte[] out = new byte[bytes.length];
+        for (int i = 0; i < bytes.length; i++) {
+            out[i] = toLowerAscii(bytes[i]);
+        }
+        return out;
     }
 }

@@ -14,6 +14,8 @@ public final class SqlQueryFilter {
     public Pattern threadRe;
     public Pattern sourceRe;
     public Pattern grepRe;
+    /** grep の元文字列。正規表現メタ文字を含まなければ、バイト列のまま探せる。 */
+    public String grepText;
     public Long sinceMillis;
     public Long untilMillis;
     public Integer minElapsed;
@@ -45,6 +47,22 @@ public final class SqlQueryFilter {
             }
         }
         return result.isEmpty() ? null : result;
+    }
+
+    /** 正規表現のメタ文字。これらを含まない文字列は「部分一致」そのもの。 */
+    private static final String REGEX_META = ".^$*+?()[]{}|\\";
+
+    /** grep の元文字列がメタ文字を含まないか（含まなければバイト列照合に回せる）。 */
+    public static boolean hasNoRegexMeta(String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < text.length(); i++) {
+            if (REGEX_META.indexOf(text.charAt(i)) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static Pattern compileRegex(String pat) {

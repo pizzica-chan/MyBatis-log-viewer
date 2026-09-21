@@ -577,6 +577,7 @@ public final class LogServer {
             filter.threadRe = SqlQueryFilter.compileRegex(p.get("thread"));
             filter.sourceRe = SqlQueryFilter.compileRegex(p.get("source"));
             filter.grepRe = SqlQueryFilter.compileRegex(p.get("grep"));
+            filter.grepText = p.get("grep");
             filter.minElapsed = SqlQueryFilter.parseIntOrNull(p.get("min_elapsed"));
             filter.maxElapsed = SqlQueryFilter.parseIntOrNull(p.get("max_elapsed"));
             filter.minRowCount = SqlQueryFilter.parseIntOrNull(p.get("min_row_count"));

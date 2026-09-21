@@ -136,6 +136,17 @@ public final class SqlQuery {
     /**
      * 正規表現 / grep がある場合のみ、合致行を全件走査して Java 側で絞り込む。
      * 件数を確定させるため打ち切れない。
+     *
+     * <p>速度のために 3 つの手を使う。いずれも結果は変えない。
+     * <ul>
+     *   <li>元ファイルは {@link SqlLogIndex.SequentialRawReader} で前方向にまとめ読みする
+     *       （エントリごとの seek を避ける）</li>
+     *   <li>grep がメタ文字を含まないリテラルなら、UTF-8 デコードせずバイト列のまま探す
+     *       （grep は ASCII だけ大文字小文字を無視するので、同じ畳み方で比べる）</li>
+     *   <li>mapper / sql_text / parameters などの文字列は、列の絞り込みがあるときと
+     *       ページに載る行でだけ取り出す</li>
+     * </ul>
+     * 実測は {@code docs/performance-report.md} を参照。
      */
     private static Result scanWithJavaFilter(Connection conn, CharSequence where, List<Object> params,
             SqlQueryFilter filter, long offset, long limit) throws SQLException {
@@ -143,7 +154,15 @@ public final class SqlQuery {
         sql.append(where).append(ORDER_BY);
 
         boolean needsRaw = filter.needsRaw();
-        Map<String, RandomAccessFile> handles = needsRaw ? new HashMap<String, RandomAccessFile>() : null;
+        boolean needsColumns = needsRegexColumns(filter);
+        // メタ文字が無ければ「部分一致」なので、正規表現を通さずバイト列で探せる
+        byte[] literal = needsRaw && SqlQueryFilter.hasNoRegexMeta(filter.grepText)
+                ? SqlLogIndex.toLowerAscii(filter.grepText.getBytes(StandardCharsets.UTF_8))
+                : null;
+        Map<String, SqlLogIndex.SequentialRawReader> readers =
+                needsRaw ? new HashMap<String, SqlLogIndex.SequentialRawReader>() : null;
+        Map<Long, String> paths = needsRaw ? new HashMap<Long, String>() : null;
+        byte[] buffer = new byte[8192];
 
         long total = 0;
         List<EntryRow> page = new ArrayList<>();
@@ -151,32 +170,45 @@ public final class SqlQuery {
             bindParams(ps, params);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    EntryRow e = SqlLogIndex.rowFrom(rs);
-                    if (!matchesRegexFilters(e, filter)) {
-                        continue;
+                    EntryRow e = null;
+                    if (needsColumns) {
+                        e = SqlLogIndex.rowFrom(rs);
+                        if (!matchesRegexFilters(e, filter)) {
+                            continue;
+                        }
                     }
                     if (needsRaw) {
-                        String raw = readRawCached(handles, e);
-                        if (!matchesGrep(filter, raw)) {
+                        long start = rs.getLong(4);
+                        long end = rs.getLong(5);
+                        int len = (int) Math.max(0, Math.min(end - start, Integer.MAX_VALUE));
+                        if (len > buffer.length) {
+                            buffer = new byte[len];
+                        }
+                        int read = len > 0 ? readRaw(rs, readers, paths, start, len, buffer) : 0;
+                        if (literal != null) {
+                            if (!SqlLogIndex.containsBytesIgnoreAsciiCase(buffer, read, literal)) {
+                                continue;
+                            }
+                        } else if (!matchesGrep(filter,
+                                new String(buffer, 0, read, StandardCharsets.UTF_8))) {
                             continue;
                         }
                     }
                     if (total >= offset && page.size() < limit) {
+                        if (e == null) {
+                            e = SqlLogIndex.rowFrom(rs);
+                        }
                         page.add(e);
                     }
                     total++;
                 }
             }
+        } catch (IOException ex) {
+            // 読めなかった行を「一致しなかった」と同じ扱いにすると結果が静かにずれるため、
+            // 黙って飛ばさずエラーにする
+            throw new SQLException("ログファイルを読み出せません: " + ex.getMessage(), ex);
         } finally {
-            if (handles != null) {
-                for (RandomAccessFile f : handles.values()) {
-                    try {
-                        f.close();
-                    } catch (IOException ignored) {
-                        // ignore
-                    }
-                }
-            }
+            SqlLogIndex.closeReaders(readers);
         }
         return new Result(total, page);
     }
@@ -214,23 +246,27 @@ public final class SqlQuery {
         return f.grepRe.matcher(raw).find();
     }
 
-    private static String readRawCached(Map<String, RandomAccessFile> handles, EntryRow e) {
-        try {
-            RandomAccessFile file = handles.get(e.source);
-            if (file == null) {
-                file = new RandomAccessFile(e.source, "r");
-                handles.put(e.source, file);
-            }
-            file.seek(e.byteOffset);
-            long size = e.endByteOffset > e.byteOffset ? e.endByteOffset - e.byteOffset : 0;
-            if (size <= 0) {
-                return "";
-            }
-            byte[] buf = new byte[(int) Math.min(size, Integer.MAX_VALUE)];
-            file.readFully(buf);
-            return new String(buf, StandardCharsets.UTF_8);
-        } catch (IOException ex) {
-            return "";
+    /** いまの行の byte 範囲を読み出す。ファイルのパスは file_id ごとに 1 回だけ取り出す。 */
+    private static int readRaw(ResultSet rs, Map<String, SqlLogIndex.SequentialRawReader> readers,
+            Map<Long, String> paths, long start, int len, byte[] into)
+            throws SQLException, IOException {
+        long fileId = rs.getLong(2);
+        String path = paths.get(fileId);
+        if (path == null) {
+            path = rs.getString(17);
+            paths.put(fileId, path);
         }
+        SqlLogIndex.SequentialRawReader reader = readers.get(path);
+        if (reader == null) {
+            reader = new SqlLogIndex.SequentialRawReader(path);
+            readers.put(path, reader);
+        }
+        return reader.read(start, len, into);
+    }
+
+    /** 列（mapper / sql_text / parameters / thread / source）の絞り込みがあるか。 */
+    private static boolean needsRegexColumns(SqlQueryFilter f) {
+        return f.mapperRe != null || f.sqlRe != null || f.parametersRe != null
+                || f.threadRe != null || f.sourceRe != null;
     }
 }
