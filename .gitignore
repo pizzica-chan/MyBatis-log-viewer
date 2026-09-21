@@ -12,3 +12,9 @@ tmp/
 # OS
 Thumbs.db
 Desktop.ini
+
+# Saved search conditions (tool home / repo root; MLV_HOME overrides)
+mlv-saved-searches.json
+mlv-saved-searches.json.tmp
+mlv-java/mlv-saved-searches.json
+mlv-java/mlv-saved-searches.json.tmp

@@ -62,6 +62,8 @@ const els = {
   savedSearchSave: document.getElementById("saved-search-save"),
   savedSearchList: document.getElementById("saved-search-list"),
   savedSearchEmpty: document.getElementById("saved-search-empty"),
+  savedSearchSkipped: document.getElementById("saved-search-skipped"),
+  savedSearchFile: document.getElementById("saved-search-file"),
   pageInfo: document.getElementById("page-info"),
   prev: document.getElementById("prev"),
   next: document.getElementById("next"),
@@ -331,6 +333,8 @@ let loadPollTimer = null;
 let lastPageItems = [];
 /** 検索リクエストの連番。古い応答を捨てるために使う。 */
 let searchSeq = 0;
+/** 保存した条件の一覧を描いた世代。古い応答を捨てるために使う。 */
+let savedSearchListSeq = 0;
 
 /** 各ハイライト欄の検索語（小文字化済み）。空欄は "" のまま位置を保つ。 */
 function getHighlightNeedles() {
@@ -675,39 +679,43 @@ function applySourceDisplay() {
 }
 
 /**
- * 検索条件の保存・呼び出し（localStorage、ブラウザ単位）。
+ * 検索条件の保存・呼び出し（サーバ側。ツールホーム直下の JSON）。
  * ハイライトやフルパス表示など表示設定は対象外。検索条件欄（.filters）の
  * input/select を id -> value のマップとして保存し、適用時は同じ id の要素へ書き戻す。
  */
-const SAVED_SEARCHES_KEY = "mlv.savedSearches";
-
-function loadSavedSearches() {
-  try {
-    const raw = localStorage.getItem(SAVED_SEARCHES_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
-  } catch (e) {
-    return [];
+async function loadSavedSearches() {
+  const res = await fetch("/api/saved-searches", { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "検索条件の読み込みに失敗しました。");
   }
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    skipped: typeof data.skipped === "number" ? data.skipped : 0,
+    overflow: data.overflow === true,
+    file: typeof data.file === "string" ? data.file : "",
+  };
 }
 
-/** 保存に失敗した場合は false を返す。呼び出し側は入力欄のクリアや再描画を行わない。 */
-function writeSavedSearches(list) {
-  try {
-    localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify(list));
-    return true;
-  } catch (e) {
-    alert("検索条件の保存に失敗しました（ブラウザのストレージが使用できません）。");
-    return false;
-  }
-}
-
+/** 検索条件欄の input/select を id -> value のマップにする。 */
 function collectFilterFields() {
   const fields = {};
   for (const el of document.querySelectorAll(".filters input[id], .filters select[id]")) {
     fields[el.id] = el.value;
   }
   return fields;
+}
+
+/**
+ * 読み飛ばした項目の案内。上限超過のときは保存・削除ごと断られるので、
+ * 「次の保存で消える」ではなくファイルを減らすよう促す。
+ */
+function skippedMessage(loaded) {
+  if (loaded.overflow) {
+    return `保存ファイルの件数が上限を超えています。読み込めていない項目が ${loaded.skipped} 件あり、`
+      + "消えないよう保存と削除を止めています。ファイルを直接編集して減らしてください。";
+  }
+  return `読めなかった項目が ${loaded.skipped} 件あります（次の保存でファイルから消えます）。`;
 }
 
 /** 入力欄の既定値（HTML に書いた値）。保存に無い項目はここへ戻す。 */
@@ -744,9 +752,34 @@ function formatSavedAt(iso) {
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
-function renderSavedSearchList() {
-  const list = loadSavedSearches().sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+async function renderSavedSearchList() {
+  const seq = (savedSearchListSeq += 1);
   els.savedSearchList.innerHTML = "";
+  els.savedSearchEmpty.hidden = false;
+  els.savedSearchEmpty.textContent = "読み込み中...";
+  if (els.savedSearchSkipped) els.savedSearchSkipped.hidden = true;
+  let loaded;
+  try {
+    loaded = await loadSavedSearches();
+  } catch (e) {
+    if (seq !== savedSearchListSeq) return;
+    els.savedSearchEmpty.textContent = e.message || "検索条件の読み込みに失敗しました。";
+    return;
+  }
+  if (seq !== savedSearchListSeq) return;
+  if (els.savedSearchFile) {
+    // パスは textContent で入れる（HTML として解釈させない）
+    els.savedSearchFile.textContent = loaded.file || "(取得できませんでした)";
+    els.savedSearchFile.title = loaded.file || "";
+  }
+  if (els.savedSearchSkipped) {
+    els.savedSearchSkipped.hidden = loaded.skipped <= 0;
+    els.savedSearchSkipped.textContent = loaded.skipped > 0
+      ? skippedMessage(loaded)
+      : "";
+  }
+  const list = loaded.items.slice().sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+  els.savedSearchEmpty.textContent = "保存した検索条件はまだありません。";
   els.savedSearchEmpty.hidden = list.length > 0;
   for (const saved of list) {
     const li = document.createElement("li");
@@ -780,10 +813,21 @@ function renderSavedSearchList() {
     deleteBtn.type = "button";
     deleteBtn.className = "saved-search-delete";
     deleteBtn.textContent = "削除";
-    deleteBtn.addEventListener("click", () => {
+    deleteBtn.addEventListener("click", async () => {
       if (!confirm(`「${saved.name}」を削除しますか？`)) return;
-      writeSavedSearches(loadSavedSearches().filter((s) => s.id !== saved.id));
-      renderSavedSearchList();
+      try {
+        const params = new URLSearchParams();
+        params.set("id", saved.id);
+        const res = await fetch("/api/saved-searches?" + params, { method: "DELETE" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.error || "削除に失敗しました。");
+          return;
+        }
+        await renderSavedSearchList();
+      } catch (e) {
+        alert(e.message || "削除に失敗しました。");
+      }
     });
     buttons.appendChild(applyBtn);
     buttons.appendChild(deleteBtn);
@@ -795,31 +839,31 @@ function renderSavedSearchList() {
 }
 
 /** 現在の検索条件欄の内容に名前を付けて保存する。同名があれば確認のうえ上書きする。 */
-function saveCurrentSearch() {
+async function saveCurrentSearch() {
   const name = els.savedSearchName.value.trim();
   if (!name) {
     alert("名前を入力してください。");
     return;
   }
-  const list = loadSavedSearches();
-  const existing = list.find((s) => s.name === name);
-  if (existing && !confirm(`「${name}」は既に保存されています。上書きしますか？`)) return;
-  const fields = collectFilterFields();
-  const savedAt = new Date().toISOString();
-  if (existing) {
-    existing.fields = fields;
-    existing.savedAt = savedAt;
-  } else {
-    list.push({
-      id: String(Date.now()) + "-" + Math.random().toString(36).slice(2, 8),
-      name,
-      savedAt,
-      fields,
+  try {
+    const loaded = await loadSavedSearches();
+    const existing = loaded.items.find((s) => s.name === name);
+    if (existing && !confirm(`「${name}」は既に保存されています。上書きしますか？`)) return;
+    const res = await fetch("/api/saved-searches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, fields: collectFilterFields() }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || "検索条件の保存に失敗しました。");
+      return;
+    }
+    els.savedSearchName.value = "";
+    await renderSavedSearchList();
+  } catch (e) {
+    alert(e.message || "検索条件の保存に失敗しました。");
   }
-  if (!writeSavedSearches(list)) return;
-  els.savedSearchName.value = "";
-  renderSavedSearchList();
 }
 
 function addCell(tr, content, options = {}) {

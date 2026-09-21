@@ -291,12 +291,16 @@
   <dialog id="saved-searches-dialog">
     <form method="dialog" class="saved-searches-form">
       <h2>保存した検索条件</h2>
+      <p class="saved-search-file-hint">
+        保存先: <code id="saved-search-file">読み込み中...</code>
+      </p>
       <div class="saved-search-save">
         <input id="saved-search-name" placeholder="名前を付けて保存" maxlength="100">
         <button type="button" id="saved-search-save">現在の条件を保存</button>
       </div>
       <ul id="saved-search-list" class="saved-search-list"></ul>
       <p id="saved-search-empty" class="saved-search-empty" hidden>保存した検索条件はまだありません。</p>
+      <p id="saved-search-skipped" class="saved-search-empty" hidden></p>
       <div class="saved-searches-actions">
         <button type="submit">閉じる</button>
       </div>

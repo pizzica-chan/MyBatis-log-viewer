@@ -30,6 +30,10 @@ $AppUrl = "http://localhost:8767"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
 
+# 無いパスをマウントすると Docker がディレクトリを作るので、保存ファイルを先に用意する
+. "$PSScriptRoot\Initialize-SavedSearches.ps1"
+Initialize-SavedSearchesFile -RepoRoot $RepoRoot
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "docker が PATH にありません。Docker Desktop をインストールしてください。"
 }

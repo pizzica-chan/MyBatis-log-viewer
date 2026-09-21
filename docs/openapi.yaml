@@ -73,3 +73,40 @@ paths:
   /api/stats/slow:
     get:
       summary: 遅い SQL ランキング
+  /api/saved-searches:
+    get:
+      summary: 保存した検索条件の一覧
+      description: |
+        ツールホーム直下（`MLV_HOME`。未設定時はリポジトリ直下）の
+        `mlv-saved-searches.json` を読む。条件の値は正規表現を含みうるが、
+        読み書きでは文字列として扱い、コンパイルもマッチもしない。
+        壊れている項目と 200 件を超えた余りは読み飛ばし、件数を `skipped` で返す。
+        件数が上限を超えていたときは `overflow` を `true` にし、そのファイルへの
+        保存・削除は 400 で断る（書き戻すと読み飛ばした条件が消えるため）。
+      responses:
+        "200":
+          description: 一覧（items / skipped / overflow / file）
+        "500":
+          description: 保存ファイルを読めない（JSON が壊れている・通常ファイルでない等）
+    post:
+      summary: 条件を保存（同名は上書き）
+      description: |
+        `{"name": "...", "fields": {"mapper": "...", ...}}` を受け取る。
+        `fields` は検索条件欄の id だけを残し、未知のキーは捨てる。
+      responses:
+        "200":
+          description: 保存した 1 件
+        "400":
+          description: 名前が空・長すぎる、JSON が不正、値が文字列でない、200 件を超える、保存ファイルが上限超過
+        "500":
+          description: 保存ファイルへ書けない
+    delete:
+      summary: 保存した条件を削除
+      description: クエリ `id`（UUID 形式）で 1 件削除する。
+      responses:
+        "200":
+          description: 削除した
+        "400":
+          description: id が未指定・形式が不正、保存ファイルが上限超過
+        "404":
+          description: 指定した条件が無い

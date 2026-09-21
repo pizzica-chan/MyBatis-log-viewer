@@ -1,8 +1,10 @@
 package com.example.mlv;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -24,6 +26,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -103,6 +106,7 @@ public final class LogServer {
     private Connection conn;
 
     private final Map<String, byte[]> staticCache = new HashMap<>();
+    private final SavedSearchesStore savedSearches;
 
     /**
      * 利用者が明示指定した書式。{@code null} なら取り込みのたびに自動判定する。
@@ -120,6 +124,7 @@ public final class LogServer {
         this.logRoot = logRoot;
         this.logPaths = logPaths != null ? logPaths : Collections.<Path>emptyList();
         this.requestedFormat = requestedFormat;
+        this.savedSearches = new SavedSearchesStore(SavedSearchesStore.defaultFile());
     }
 
     public void start(String host, int port) throws IOException {
@@ -141,6 +146,7 @@ public final class LogServer {
 
         System.out.println("MyBatis Log Viewer (Java): http://" + host + ":" + port);
         System.out.println("インデックス: " + IndexStore.tmpIndexDir() + " (MLV_HOME で repo 変更可)");
+        System.out.println("保存した検索条件: " + savedSearches.file() + " (MLV_HOME で変更可)");
         if (logRoot != null) {
             System.out.println("ログディレクトリ: " + PathUtil.normalizePath(logRoot));
         }
@@ -178,6 +184,8 @@ public final class LogServer {
                     handleStatsSummary(ex);
                 } else if ("/api/stats/mappers".equals(path)) {
                     handleStatsMappers(ex);
+                } else if ("/api/saved-searches".equals(path)) {
+                    handleSavedSearches(ex);
                 } else if ("/api/stats/slow".equals(path)) {
                     handleStatsSlow(ex);
                 } else {
@@ -905,6 +913,119 @@ public final class LogServer {
         return true;
     }
 
+    // ---- API: saved-searches ----------------------------------------------
+
+    /**
+     * 検索・追跡条件の保存。値は正規表現を含みうるが、ここでは文字列として読み書きするだけ。
+     * コンパイルやマッチは行わない。
+     */
+    private void handleSavedSearches(HttpExchange ex) throws IOException {
+        String method = ex.getRequestMethod();
+        try {
+            if ("GET".equalsIgnoreCase(method)) {
+                SavedSearchesStore.LoadResult loaded = savedSearches.load();
+                JsonObject payload = new JsonObject();
+                JsonArray items = new JsonArray();
+                for (SavedSearchesStore.SavedSearch item : loaded.items) {
+                    items.add(item.toJson());
+                }
+                payload.add("items", items);
+                payload.addProperty("skipped", loaded.skipped);
+                payload.addProperty("overflow", loaded.overflow);
+                // 画面に実際の保存先を出すため、解決済みの絶対パスを返す
+                payload.addProperty("file", PathUtil.normalizePath(savedSearches.file()));
+                sendJson(ex, 200, payload);
+                return;
+            }
+            if ("POST".equalsIgnoreCase(method)) {
+                String body = readBodyLimited(ex, 64 * 1024);
+                JsonObject obj;
+                try {
+                    JsonElement parsed = JsonParser.parseString(body);
+                    if (!parsed.isJsonObject()) {
+                        sendErrorJson(ex, 400, "JSON を解釈できません");
+                        return;
+                    }
+                    obj = parsed.getAsJsonObject();
+                } catch (RuntimeException e) {
+                    sendErrorJson(ex, 400, "JSON を解釈できません");
+                    return;
+                }
+                String name = jsonString(obj, "name");
+                String mode = jsonString(obj, "mode");
+                Map<String, String> fields = jsonStringMap(obj, "fields");
+                SavedSearchesStore.SavedSearch saved = savedSearches.upsert(name, mode, fields);
+                sendJson(ex, 200, saved.toJson());
+                return;
+            }
+            if ("DELETE".equalsIgnoreCase(method)) {
+                String id = queryParams(ex).get("id");
+                if (id == null || id.isEmpty()) {
+                    sendErrorJson(ex, 400, "id を指定してください");
+                    return;
+                }
+                if (!savedSearches.delete(id)) {
+                    sendErrorJson(ex, 404, "指定した条件が見つかりません");
+                    return;
+                }
+                JsonObject payload = new JsonObject();
+                payload.addProperty("deleted", true);
+                sendJson(ex, 200, payload);
+                return;
+            }
+            sendErrorJson(ex, 405, "method not allowed");
+        } catch (IllegalArgumentException e) {
+            sendErrorJson(ex, 400, e.getMessage());
+        } catch (IOException e) {
+            sendErrorJson(ex, 500,
+                    e.getMessage() != null ? e.getMessage() : "保存ファイルの読み書きに失敗しました");
+        }
+    }
+
+    /** JSON の文字列フィールド。無い・null なら null。文字列以外は 400 相当の例外。 */
+    private static String jsonString(JsonObject obj, String key) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) {
+            return null;
+        }
+        JsonElement value = obj.get(key);
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException(key + " は文字列で指定してください");
+        }
+        return value.getAsJsonPrimitive().getAsString();
+    }
+
+    /**
+     * fields オブジェクトから文字列だけを拾う。入れ子や数値は拒否する。
+     * キーの選別（未知 id を捨てる）は {@link SavedSearchesStore} 側で行う。
+     */
+    private static Map<String, String> jsonStringMap(JsonObject obj, String key) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) {
+            return Collections.emptyMap();
+        }
+        JsonElement value = obj.get(key);
+        if (!value.isJsonObject()) {
+            throw new IllegalArgumentException(key + " はオブジェクトで指定してください");
+        }
+        Map<String, String> map = new LinkedHashMap<String, String>();
+        for (Map.Entry<String, JsonElement> entry : value.getAsJsonObject().entrySet()) {
+            JsonElement field = entry.getValue();
+            if (field == null || field.isJsonNull()) {
+                continue;
+            }
+            if (!field.isJsonPrimitive()) {
+                throw new IllegalArgumentException(
+                        key + "." + entry.getKey() + " は文字列で指定してください");
+            }
+            JsonPrimitive primitive = field.getAsJsonPrimitive();
+            if (!primitive.isString()) {
+                throw new IllegalArgumentException(
+                        key + "." + entry.getKey() + " は文字列で指定してください");
+            }
+            map.put(entry.getKey(), primitive.getAsString());
+        }
+        return map;
+    }
+
     private void serveStatic(HttpExchange ex, String name) throws IOException {
         byte[] content = loadStatic(name);
         if (content == null) {
@@ -1013,6 +1134,33 @@ public final class LogServer {
         try (InputStream in = ex.getRequestBody()) {
             return new String(readAll(in), StandardCharsets.UTF_8);
         }
+    }
+
+    /** 本文を最大 {@code maxBytes} まで読む。超えたら読み切る前に止めて 400 相当にする。 */
+    private String readBodyLimited(HttpExchange ex, int maxBytes) throws IOException {
+        List<String> lengthHeaders = ex.getRequestHeaders().get("Content-Length");
+        if (lengthHeaders != null && !lengthHeaders.isEmpty()) {
+            try {
+                long declared = Long.parseLong(lengthHeaders.get(0).trim());
+                if (declared > maxBytes) {
+                    throw new IllegalArgumentException("リクエストが大きすぎます");
+                }
+            } catch (NumberFormatException ignored) {
+                // ヘッダが不正でも、実サイズの上限で止める
+            }
+        }
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try (InputStream in = ex.getRequestBody()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                if ((long) bos.size() + n > maxBytes) {
+                    throw new IllegalArgumentException("リクエストが大きすぎます");
+                }
+                bos.write(buf, 0, n);
+            }
+        }
+        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private static byte[] readAll(InputStream in) throws IOException {

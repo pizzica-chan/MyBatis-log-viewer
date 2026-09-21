@@ -362,6 +362,13 @@ button {
   font-size: 1rem;
 }
 
+.saved-search-file-hint {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
 .saved-search-save {
   display: flex;
   gap: 0.5rem;
