@@ -710,7 +710,21 @@ function collectFilterFields() {
   return fields;
 }
 
+/** 入力欄の既定値（HTML に書いた値）。保存に無い項目はここへ戻す。 */
+function defaultFieldValue(el) {
+  if (el.tagName === "SELECT") {
+    const selected = el.querySelector("option[selected]");
+    return selected ? selected.value : (el.options[0] ? el.options[0].value : "");
+  }
+  return el.defaultValue;
+}
+
 function applyFilterFields(fields) {
+  // 保存に含まれない項目に前の入力が残ると、条件が混ざって分かりにくい。
+  // 「適用 = 保存したときの状態を再現」に揃えるため、いったん既定値へ戻す。
+  for (const el of document.querySelectorAll(".filters input[id], .filters select[id]")) {
+    el.value = defaultFieldValue(el);
+  }
   for (const [id, value] of Object.entries(fields || {})) {
     const el = document.getElementById(id);
     if (el) el.value = value;
@@ -719,6 +733,8 @@ function applyFilterFields(fields) {
   // 検索すれば同じ分の範囲になるため、古い厳密範囲は捨てる（秒精度までは再現しない）。
   clearExactQueryRange();
   updateRangeUi();
+  // 適用しただけでは検索しないので、折りたたみ中の件数表示はここで合わせる
+  updateFiltersSummary();
 }
 
 function formatSavedAt(iso) {
@@ -753,11 +769,12 @@ function renderSavedSearchList() {
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
     applyBtn.textContent = "適用";
+    // 条件を入れるだけにする（実行は利用者が「検索」を押したとき）。
+    // 重いログでは、呼び出しただけで走るほうが困るため。
     applyBtn.addEventListener("click", () => {
       applyFilterFields(saved.fields);
       els.savedSearchesDialog.close();
       offset = 0;
-      loadSql();
     });
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
