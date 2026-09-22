@@ -115,7 +115,7 @@ paths:
         "400":
           description: id が未指定・形式が不正、保存ファイルが上限超過
         "404":
-          description: 指定した条件が無い
+          description: 指定した条件がない
   /api/log-formats:
     get:
       summary: 利用者定義のログ書式の一覧
@@ -159,20 +159,48 @@ paths:
         "400":
           description: id が未指定、書式ファイルに読めない部分がある
         "404":
-          description: 指定した書式が無い
+          description: 指定した書式がない
   /api/log-formats/try:
     post:
       summary: 書式をサンプル 1 行で試す（保存しない）
       description: |
-        `{"pattern": "...", "timestamp": "...", "sample": "<ログの 1 行>"}` を受け取り、
         取り込みと同じ経路で 1 行を解析して、取り出せた項目を返す。
-        当たらなかった場合は `reason` に理由を入れる。「正規表現が一致しない」と
+        一致しなかった場合は `reason` に理由を入れる。「正規表現が一致しない」と
         「一致したが日時を読めない」は直す場所が違うため区別する。
 
         `timestamp` は**空でもよい**。その場合は正規表現だけを見て、`ts` に取れた
         文字列を `ts_text` に入れ、`timestamp_checked` を `false` にする
         （正規表現を組み立てている途中で試せるようにするため）。
         `sample` は必須。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pattern, sample]
+              properties:
+                id:
+                  type: string
+                  maxLength: 40
+                  description: |
+                    任意。試し打ちの失敗文に出す呼び名（未指定なら「いま入力中のもの」）。
+                name:
+                  type: string
+                  maxLength: 100
+                  description: 任意（失敗文の呼び名は主に `id` を使う）
+                pattern:
+                  type: string
+                  maxLength: 4000
+                  description: 1 行に一致させる Java の正規表現（`ts` と `message` が必須）
+                timestamp:
+                  type: string
+                  maxLength: 100
+                  description: |
+                    `ts` の読み方。**空でもよい**。空のときは正規表現だけを見る。
+                sample:
+                  type: string
+                  description: 試すログの 1 行
       responses:
         "200":
           description: 試した結果（matched / timestamp_checked / 各項目、または reason）

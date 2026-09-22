@@ -913,7 +913,9 @@ function updatePager(off, limit, total) {
   const from = total === 0 ? 0 : off + 1;
   const to = Math.min(off + limit, total);
   els.resultCount.textContent = `${total.toLocaleString()} 件中 ${from}–${to} 件を表示`;
-  els.pageInfo.textContent = `offset ${off}`;
+  const page = total === 0 ? 1 : Math.floor(off / limit) + 1;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  els.pageInfo.textContent = `${page} / ${pages}`;
   els.prev.disabled = off <= 0;
   els.next.disabled = off + limit >= total;
 }

@@ -84,10 +84,11 @@ docker compose down
 | `./samples` → `/app/logs/samples` | サンプルログ（読み取り専用）。起動時に `--dir` で自動読み込み |
 | `./tmp` → `/app/tmp` | SQLite インデックスの永続化 |
 | `./mlv-saved-searches.json` → `/app/mlv-saved-searches.json` | 検索条件の永続化（`MLV_HOME` 直下） |
+| `./mlv-log-formats.txt` → `/app/mlv-log-formats.txt` | 利用者定義のログ書式（`MLV_HOME` 直下） |
 | `MLV_LOG_DIR` | ホスト側のログディレクトリを差し替え（例: `$env:MLV_LOG_DIR="C:\logs\app"`） |
 | `MLV_HOME=/app` | コンテナ内のリポジトリルート（インデックス・検索条件の基準） |
 
-検索条件ファイルがホスト側に無いと Docker がディレクトリを作るので、`docker-up.bat` は空の JSON を先に作ります。`docker compose` だけ使うときは、同じファイルを先に置いてください。
+`docker-up.bat` は bind mount 用に空の `mlv-saved-searches.json` と空の `mlv-log-formats.txt` を先に用意します（ないと Docker がディレクトリを作ることがあるため）。アプリ本体は書式を 1 件も登録しないあいだ `mlv-log-formats.txt` を自動では作りません。`docker compose` だけ使うときも同様に先に置いてください。
 
 **ホストポート:** 既定は **`127.0.0.1:8767`**（ループバックのみ）です。競合する場合は `docker-compose.yml` の `ports` を `"127.0.0.1:18767:8767"` のように変更してください。`127.0.0.1:` を外すと LAN 全体に公開されます。
 
@@ -134,7 +135,7 @@ SQL ブロックを囲むアプリログ側の前置き（日時・レベル・�
 
 ### 書式を自分で定義する
 
-上の書式に無い前置きのログは、正規表現で書式を自分で定義すると読めるようになります。
+上の書式にない前置きのログは、正規表現で書式を自分で定義すると読めるようになります。
 **中身の管理は利用者の責任**です。
 
 **画面から登録できます。** ログディレクトリ欄の **書式の管理...** を開くと、一覧・登録・
