@@ -21,8 +21,9 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
 
 # 無いパスをマウントすると Docker がディレクトリを作るので、保存ファイルを先に用意する
-. "$PSScriptRoot\Initialize-SavedSearches.ps1"
+. "$PSScriptRoot\Initialize-MountedFiles.ps1"
 Initialize-SavedSearchesFile -RepoRoot $RepoRoot
+Initialize-LogFormatsFile -RepoRoot $RepoRoot
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "docker が PATH にありません。"

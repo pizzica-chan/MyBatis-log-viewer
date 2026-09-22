@@ -205,7 +205,7 @@ public final class SqlLogIndex {
         return String.join("\n", parts);
     }
 
-    public static boolean needsRebuild(Connection conn, List<Path> paths, LogFormat format)
+    public static boolean needsRebuild(Connection conn, List<Path> paths, LogFormatSpec format)
             throws SQLException, IOException {
         if (paths.isEmpty()) {
             return false;
@@ -227,11 +227,17 @@ public final class SqlLogIndex {
      * ファイル集合 + スキーマ世代 + ログ書式のフィンガープリント。
      *
      * <p>書式を変えると解析結果そのものが変わるため、フィンガープリントに含めて
-     * 既存の索引を再利用しないようにする。
+     * 既存の索引を再利用しないようにする。利用者定義の書式では id だけでなく
+     * 正規表現と日時書式も含める（{@link LogFormatSpec#fingerprint()}）。
+     * 含めないと、書式を直したのに古い索引がそのまま使われる。
+     *
+     * <p>組み込み書式では従来どおり id だけが入る。ここの文字列の形を変えると
+     * 既存の索引がすべて作り直しになるため、変えないこと。
      */
-    private static String indexFingerprint(List<Path> paths, LogFormat format) throws IOException {
+    private static String indexFingerprint(List<Path> paths, LogFormatSpec format)
+            throws IOException {
         // schema:5 で FTS を廃止。旧世代の索引は指紋不一致で再構築される
-        return fileFingerprint(paths) + "\nschema:5" + "\nformat:" + format.id();
+        return fileFingerprint(paths) + "\nschema:5" + "\nformat:" + format.fingerprint();
     }
 
     /**
@@ -240,7 +246,7 @@ public final class SqlLogIndex {
      * <p>フィンガープリントと同じトランザクションで書く。別に書くと、途中で落ちたときに
      * 「索引は有効（fingerprint あり）なのに書式だけ無い」状態になりうるため。
      */
-    private static void saveLogFormat(Connection conn, LogFormat format) throws SQLException {
+    private static void saveLogFormat(Connection conn, LogFormatSpec format) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('log_format', ?)")) {
             ps.setString(1, format.id());
@@ -248,13 +254,18 @@ public final class SqlLogIndex {
         }
     }
 
-    /** 取り込みに使った書式。未保存（旧バージョンが作った索引）なら {@code null}。 */
-    public static LogFormat getLogFormat(Connection conn) throws SQLException {
+    /**
+     * 取り込みに使った書式の id。未保存（旧バージョンが作った索引）なら {@code null}。
+     *
+     * <p>利用者定義の書式もありうるので、enum ではなく id をそのまま返す。
+     * 呼び出し側が {@link LogFormatSpec#byId} で引き直す。
+     */
+    public static String getLogFormatId(Connection conn) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT value FROM meta WHERE key = 'log_format'")) {
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return LogFormat.byId(rs.getString(1));
+                    return rs.getString(1);
                 }
             }
         }
@@ -388,7 +399,7 @@ public final class SqlLogIndex {
     }
 
     public static BuildResult buildIndex(Connection conn, List<Path> paths, ProgressCallback progress,
-            LogFormat format)
+            LogFormatSpec format)
             throws SQLException, IOException {
         boolean prevAutoCommit = conn.getAutoCommit();
         conn.setAutoCommit(false);
@@ -400,7 +411,7 @@ public final class SqlLogIndex {
     }
 
     private static BuildResult buildIndexTx(Connection conn, List<Path> paths, ProgressCallback progress,
-            LogFormat format)
+            LogFormatSpec format)
             throws SQLException, IOException {
         clearIndex(conn);
         try (Statement st = conn.createStatement()) {
@@ -695,8 +706,12 @@ public final class SqlLogIndex {
     }
 
     private static void parseFileInto(long fileId, Path path, BlockingQueue<List<Row>> queue,
-            AtomicLong skippedCounter, List<SkippedLine> skippedSamples, LogFormat format)
+            AtomicLong skippedCounter, List<SkippedLine> skippedSamples, LogFormatSpec format)
             throws IOException, InterruptedException {
+        // 書式は取り込み開始時に確定しているので、分岐の材料はループの外で 1 回だけ取り出す。
+        // 組み込み書式のときは custom == null で、従来と同じ経路をそのまま通る。
+        final LogFormat builtin = format.builtin();
+        final CustomLogFormat custom = format.custom();
         try (InputStream raw = Files.newInputStream(path);
              InputStream in = new BufferedInputStream(raw, 1 << 16);
              ByteLineReader reader = new ByteLineReader(in)) {
@@ -709,9 +724,27 @@ public final class SqlLogIndex {
                 if (reader.isBlankLine()) {
                     continue;
                 }
-                boolean header = LogParser.looksLikeHeader(format, reader.lineBuf, reader.lineLen);
-                LogParser.ParsedLine parsed =
-                        header ? LogParser.parse(format, reader.lineBuf, reader.lineLen) : null;
+                boolean header;
+                LogParser.ParsedLine parsed;
+                if (custom == null) {
+                    header = LogParser.looksLikeHeader(builtin, reader.lineBuf, reader.lineLen);
+                    parsed = header
+                            ? LogParser.parse(builtin, reader.lineBuf, reader.lineLen) : null;
+                } else {
+                    try {
+                        parsed = custom.parse(reader.lineBuf, reader.lineLen);
+                    } catch (CustomLogFormat.FormatFailure e) {
+                        // 暴走した正規表現や壊れた定義。黙って固まる・原因不明で落ちるより、
+                        // どの書式のどこで止めたかが分かる形で失敗させる。
+                        throw new IOException(e.getMessage() + "（" + path + " の "
+                                + lineNo + " 行目）", e);
+                    }
+                    // 利用者定義の書式には、バイト列だけで見るヘッダ判定が無い。
+                    // 一致しなかった行は継続行（スタックトレース等）として扱う。
+                    // 組み込み書式で数えている「ヘッダの形なのに読めなかった行」は、
+                    // ここでは区別できないので 0 件になる。
+                    header = parsed != null;
+                }
 
                 if (parsed != null && MyBatisBlockParser.isPreparingLine(parsed)) {
                     MyBatisBlockParser.capIncompleteBlocksAt(pendingBlocks.values(), reader.lineStart);

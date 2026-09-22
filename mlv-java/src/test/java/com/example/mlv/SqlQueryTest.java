@@ -25,7 +25,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             SqlQueryFilter f = new SqlQueryFilter();
             f.mapperRe = SqlQueryFilter.compileRegex("UserMapper");
             SqlQuery.Result r = SqlQuery.querySql(conn, f, 0, 100);
@@ -42,7 +42,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             // 6 完了 + 1 未完了(selectMissing) + 2 末尾インターリーブ = 9
             assertEquals(9, SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 100).total);
         }
@@ -54,7 +54,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
 
             SqlQueryFilter zeroRows = new SqlQueryFilter();
             zeroRows.minRowCount = 0;
@@ -83,7 +83,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             SqlQueryFilter f = new SqlQueryFilter();
             f.mapperRe = SqlQueryFilter.compileRegex("selectById");
             SqlLogIndex.EntryRow row = SqlQuery.querySql(conn, f, 0, 1).page.get(0);
@@ -98,7 +98,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
 
             assertEquals(9, queryBySource(conn, "samples").total);
             assertEquals(9, queryBySource(conn, "mybatis-sample\\.log").total);
@@ -115,7 +115,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             for (SqlQueryFilter pushdown : pushdownFilters()) {
                 SqlQueryFilter scan = copyOf(pushdown);
                 scan.sourceRe = SqlQueryFilter.compileRegex(".");
@@ -136,7 +136,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             SqlQuery.Result all = SqlQuery.querySql(conn, new SqlQueryFilter(), 0, 100);
             SqlQuery.Result second = SqlQuery.querySql(conn, new SqlQueryFilter(), 2, 3);
 
@@ -219,7 +219,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             String[] words = {"SELECT", "select", "users", "Parameters", "id", "ユーザー",
                 "alice@example.com", "見つからない語"};
             for (String word : words) {
@@ -249,7 +249,7 @@ class SqlQueryTest {
         assumeTrue(sample.toFile().exists(), "sample log not found");
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             // . を任意の 1 文字として解釈しないと 0 件になる指定
             SqlQueryFilter f = new SqlQueryFilter();
             f.grepRe = SqlQueryFilter.compileRegex("SELEC.");
@@ -287,7 +287,7 @@ class SqlQueryTest {
 
         try (Connection conn = SqlLogIndex.openMemory()) {
             SqlLogIndex.buildIndex(conn, Collections.singletonList(PathUtil.resolve(copy)), null,
-                    LogFormat.DEFAULT);
+                    LogFormatSpec.DEFAULT);
             java.nio.file.Files.delete(copy);
             SqlQueryFilter f = new SqlQueryFilter();
             f.grepRe = SqlQueryFilter.compileRegex("SELECT");

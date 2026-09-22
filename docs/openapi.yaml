@@ -6,6 +6,12 @@ paths:
   /api/meta:
     get:
       summary: 読み込み状態・件数・期間
+      description: |
+        使った書式も返す。`log_format` / `log_format_name` / `log_format_auto` に加え、
+        利用者定義かどうかを `log_format_custom` で返す（画面はこれで、読み飛ばしや
+        0 件のときの説明を書き分ける）。`log_formats` は書式のプルダウンに出す一覧
+        （組み込み + 利用者定義）。書式ファイルを読めなかったときは
+        `log_formats_error` に理由が入る（組み込み書式は巻き添えにしない）。
   /api/browse:
     get:
       summary: ディレクトリブラウザ
@@ -110,3 +116,68 @@ paths:
           description: id が未指定・形式が不正、保存ファイルが上限超過
         "404":
           description: 指定した条件が無い
+  /api/log-formats:
+    get:
+      summary: 利用者定義のログ書式の一覧
+      description: |
+        ツールホーム直下（`MLV_HOME`。未設定時はリポジトリ直下）の
+        `mlv-log-formats.txt` を読む。JSON ではなく行指向のテキストで、
+        `[id]` の節に `name` / `pattern` / `timestamp` を書く。
+        正規表現をそのままの形で保つため（`\d` を `\\d` と書き直させないため）
+        この形式にしている。
+        壊れた書式や解釈できない行は読み飛ばし、件数を
+        `skipped_formats` / `skipped_lines` に分けて返す
+        （画面が「書式が N 件」と出すので、書式と行を混ぜない）。
+      responses:
+        "200":
+          description: 一覧（items / skipped_formats / skipped_lines / file / max）
+        "500":
+          description: 書式ファイルを読めない（通常ファイルでない・大きすぎる等）
+    post:
+      summary: 書式を登録（同じ id は上書き）
+      description: |
+        `{"id": "...", "name": "...", "pattern": "...", "timestamp": "..."}` を受け取る。
+        `pattern` は名前付きグループ `ts` と `message` が必須
+        （`message` から MyBatis の Preparing / Parameters / Total を探すため）。
+        `level` / `thread` / `logger` は任意だが、`thread` と `logger` は
+        SQL ブロックの対応付けに使うので、複数スレッドのログでは実質必須。
+        検査は画面からもファイルからも同じ `LogFormatStore.create` を通る。
+        読み飛ばしがあるファイルへは書き戻さない（壊れた部分が消えるため 400）。
+      responses:
+        "200":
+          description: 登録した 1 件
+        "400":
+          description: 値が規則に合わない、20 件を超える、書式ファイルに読めない部分がある
+        "500":
+          description: 書式ファイルへ書けない
+    delete:
+      summary: 書式を削除
+      description: クエリ `id` で 1 件削除する。
+      responses:
+        "200":
+          description: 削除した
+        "400":
+          description: id が未指定、書式ファイルに読めない部分がある
+        "404":
+          description: 指定した書式が無い
+  /api/log-formats/try:
+    post:
+      summary: 書式をサンプル 1 行で試す（保存しない）
+      description: |
+        `{"pattern": "...", "timestamp": "...", "sample": "<ログの 1 行>"}` を受け取り、
+        取り込みと同じ経路で 1 行を解析して、取り出せた項目を返す。
+        当たらなかった場合は `reason` に理由を入れる。「正規表現が一致しない」と
+        「一致したが日時を読めない」は直す場所が違うため区別する。
+
+        `timestamp` は**空でもよい**。その場合は正規表現だけを見て、`ts` に取れた
+        文字列を `ts_text` に入れ、`timestamp_checked` を `false` にする
+        （正規表現を組み立てている途中で試せるようにするため）。
+        `sample` は必須。
+      responses:
+        "200":
+          description: 試した結果（matched / timestamp_checked / 各項目、または reason）
+        "400":
+          description: |
+            `pattern` や `timestamp` が規則に合わない、`sample` が空、
+            正規表現の後戻りが打ち切り基準を超えた、書式の定義そのものが壊れている
+            （どの書式が原因かを添えて返す）

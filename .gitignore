@@ -18,3 +18,9 @@ mlv-saved-searches.json
 mlv-saved-searches.json.tmp
 mlv-java/mlv-saved-searches.json
 mlv-java/mlv-saved-searches.json.tmp
+
+# User-defined log formats (tool home / repo root; MLV_HOME overrides)
+mlv-log-formats.txt
+mlv-log-formats.txt.tmp
+mlv-java/mlv-log-formats.txt
+mlv-java/mlv-log-formats.txt.tmp

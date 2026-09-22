@@ -37,7 +37,7 @@ class SqlLogIndexParseTest {
     }
 
     private static void indexLog(Connection conn, Path log) throws Exception {
-        SqlLogIndex.buildIndex(conn, Collections.singletonList(log), null, LogFormat.DEFAULT);
+        SqlLogIndex.buildIndex(conn, Collections.singletonList(log), null, LogFormatSpec.DEFAULT);
     }
 
     private static SqlLogIndex.EntryRow findByMapper(Connection conn, String mapperPattern) throws Exception {
@@ -69,11 +69,52 @@ class SqlLogIndexParseTest {
                 java.nio.charset.StandardCharsets.UTF_8);
         try (Connection conn = SqlLogIndex.openMemory()) {
             SqlLogIndex.BuildResult r = SqlLogIndex.buildIndex(
-                    conn, Collections.singletonList(log), null, LogFormat.SPRING_BOOT);
+                    conn, Collections.singletonList(log), null, LogFormatSpec.of(LogFormat.SPRING_BOOT));
             assertEquals(1, r.entryCount, "SQL ブロック 1 件として取り込めること");
             SqlLogIndex.EntryRow row = findByMapper(conn, "UserMapper");
             assertEquals("com.example.mapper.UserMapper.selectById", row.mapper);
             assertEquals("nio-8080-exec-1", row.thread);
+            assertEquals(Integer.valueOf(1), row.rowCount, "Total が拾えていること");
+        }
+    }
+
+    /**
+     * 利用者定義の書式でも、SQL ブロックを同じように索引化できること。
+     *
+     * <p>組み込み書式がどれも当たらない前置き（ここでは縦棒区切り）を正規表現で定義し、
+     * Preparing / Parameters / Total が 1 件のブロックとして組み上がることを見る。
+     * <strong>この経路が通らないと、行はすべて読めているのに SQL が 0 件になる</strong>
+     * ―― 画面上は「取り込めているのに何も出ない」という、いちばん分かりにくい壊れ方をする。
+     *
+     * <p>継続行（スタックトレース）が混ざっても件数が増えないことも同時に確かめる。
+     * 利用者定義の書式にはバイト列だけのヘッダ判定が無く、一致しない行を継続行として
+     * 扱う作りにしているため、ここが崩れると件数がずれる。
+     */
+    @Test
+    void indexesSqlBlocksWithCustomFormat(@TempDir Path tmp) throws Exception {
+        Path log = tmp.resolve("pipe.log");
+        Files.write(log, Arrays.asList(
+                "2026-06-15 00:19:11.705|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|==>  Preparing: SELECT id FROM users WHERE id = ?",
+                "2026-06-15 00:19:11.706|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|==> Parameters: 1(Long)",
+                "2026-06-15 00:19:11.708|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|<==      Total: 1",
+                "\tat com.example.Hoge.run(Hoge.java:12)"),
+                StandardCharsets.UTF_8);
+        CustomLogFormat custom = LogFormatStore.create("pipe", "縦棒区切り",
+                "^(?<ts>[^|]+)\\|(?<level>[^|]*)\\|(?<thread>[^|]*)\\|(?<logger>[^|]*)"
+                        + "\\|(?<message>.*)$",
+                "yyyy-MM-dd HH:mm:ss.SSS");
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.BuildResult r = SqlLogIndex.buildIndex(
+                    conn, Collections.singletonList(log), null, LogFormatSpec.of(custom));
+            assertEquals(1, r.entryCount, "SQL ブロック 1 件として取り込めること");
+            SqlLogIndex.EntryRow row = findByMapper(conn, "UserMapper");
+            assertEquals("com.example.mapper.UserMapper.selectById", row.mapper);
+            assertEquals("exec-1", row.thread);
+            assertEquals("SELECT id FROM users WHERE id = ?", row.sqlText);
+            assertEquals("1(Long)", row.parameters);
             assertEquals(Integer.valueOf(1), row.rowCount, "Total が拾えていること");
         }
     }
@@ -105,7 +146,7 @@ class SqlLogIndexParseTest {
         assumeSampleExists(sample);
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
 
             SqlQueryFilter incomplete = new SqlQueryFilter();
             incomplete.complete = Boolean.FALSE;
@@ -201,7 +242,7 @@ class SqlLogIndexParseTest {
         assumeSampleExists(sample);
 
         try (Connection conn = SqlLogIndex.openMemory()) {
-            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormat.DEFAULT);
+            SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
 
             SqlQueryFilter tailA = new SqlQueryFilter();
             tailA.mapperRe = SqlQueryFilter.compileRegex("selectById");

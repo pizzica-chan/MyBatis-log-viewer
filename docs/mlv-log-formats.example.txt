@@ -1,0 +1,28 @@
+# mlv の利用者定義ログ書式（例）
+#
+# このファイルをツールホーム直下へ mlv-log-formats.txt として置くと、
+# 書式のプルダウンに並びます（MLV_HOME。未設定時はリポジトリ直下）。
+# 画面の「書式の管理」からも同じファイルを編集できます。
+#
+# 行頭の # だけがコメントです。値の途中の # はただの文字として扱います。
+#
+# 必須は pattern と timestamp。name を省くと id をそのまま名前に使います。
+# 取り出せる項目は名前付きグループで、ts と message が必須です。
+# MyBatis の Preparing / Parameters / Total は message から探すため、
+# ここを取り出さないと SQL が 1 件も見つかりません。
+#
+# level は任意です。thread と logger も任意ですが、この 2 つで SQL ブロックの
+# 対応を取っているので、複数スレッドが動くログでは必ず入れてください
+# （入れないと別スレッドの Preparing と Parameters が混ざります）。
+
+# 2026/06/15 00:19:11.705 DEBUG (main) c.e.mapper.UserMapper.selectById : ==>  Preparing: select 1
+[my-app]
+name = 自社アプリ形式
+pattern = ^(?<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) (?<level>\w+) \((?<thread>[^)]*)\) (?<logger>\S+) : (?<message>.*)$
+timestamp = yyyy/MM/dd HH:mm:ss.SSS
+
+# 2026-06-15 00:19:11.705|DEBUG|main|c.e.mapper.UserMapper.selectById|==>  Preparing: select 1
+[pipe]
+name = 縦棒区切りの形式
+pattern = ^(?<ts>[^|]+)\|(?<level>[^|]*)\|(?<thread>[^|]*)\|(?<logger>[^|]*)\|(?<message>.*)$
+timestamp = yyyy-MM-dd HH:mm:ss.SSS
