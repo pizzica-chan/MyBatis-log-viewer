@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.example.mlv.SqlLogIndex.EntryRow;
 
@@ -44,6 +45,9 @@ public final class SqlQuery {
         StringBuilder where = new StringBuilder("WHERE 1=1");
         List<Object> params = new ArrayList<>();
         appendConditions(where, params, filter);
+        if (filter.sourceRe != null) {
+            where.append(sourceCondition(conn, filter.sourceRe));
+        }
 
         if (!filter.needsJavaFilter()) {
             // 正規表現・grep がなければ件数もページングも SQL 側で完結できる
@@ -99,6 +103,49 @@ public final class SqlQuery {
         }
     }
 
+    /**
+     * source（ログファイルのパス）の正規表現を、files テーブルだけで判定して
+     * {@code e.file_id IN (...)} の条件（先頭に {@code " AND "} 付き。絞り込まないなら空文字）にする。
+     *
+     * <p>パスはファイルごとに 1 つなので、エントリごとに照合しなくても結果は同じになる。
+     * SQL 側で確定するので、source だけの絞り込みは {@code COUNT(*)} と {@code LIMIT} で返せる。
+     * id は DB から取り出した整数なので、バインド変数の上限を気にせず SQL に直接埋め込む。
+     *
+     * <p>列に単項の {@code +} を付け、この条件を索引や結合順の選択に使わせない。付けておけば
+     * 実行計画は source を指定しない場合と同じ形のまま、辿った行をこの条件でふるうだけになる。
+     * 付けないと 3 ファイルの索引で files を外側に回し、並べ直しを入れる計画が選ばれる
+     * （試験 {@code sourceConditionKeepsIndexOrder} で確認している）。
+     * 実測は {@link #scanWithJavaFilter} のコメントを参照。
+     */
+    static String sourceCondition(Connection conn, Pattern sourceRe) throws SQLException {
+        List<Long> ids = new ArrayList<>();
+        int fileCount = 0;
+        try (PreparedStatement ps = conn.prepareStatement("SELECT id, path FROM files");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                fileCount++;
+                if (sourceRe.matcher(rs.getString(2)).find()) {
+                    ids.add(rs.getLong(1));
+                }
+            }
+        }
+        if (ids.size() == fileCount) {
+            // すべてのファイルが一致するなら絞り込むものはない
+            return "";
+        }
+        if (ids.isEmpty()) {
+            return " AND 0";
+        }
+        StringBuilder sql = new StringBuilder(" AND +e.file_id IN (");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append(ids.get(i).longValue());
+        }
+        return sql.append(")").toString();
+    }
+
     private static long countMatches(Connection conn, CharSequence where, List<Object> params)
             throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM entries e " + where)) {
@@ -143,10 +190,18 @@ public final class SqlQuery {
      *       （エントリごとの seek を避ける）</li>
      *   <li>grep がメタ文字を含まないリテラルなら、UTF-8 デコードせずバイト列のまま探す
      *       （grep は ASCII だけ大文字小文字を無視するので、同じ畳み方で比べる）</li>
-     *   <li>mapper / sql_text / parameters などの文字列は、列の絞り込みがあるときと
-     *       ページに載る行でだけ取り出す</li>
+     *   <li>mapper / sql_text / parameters などの文字列は、ページに載る行でだけ取り出す。
+     *       列の絞り込みがあるときも、照合に使う列だけを取り出す</li>
      * </ul>
      * 実測は {@code docs/performance-report.md} を参照。
+     *
+     * <p>列の絞り込みで照合に使う列だけを取り出し、source を SQL へ押し下げた
+     * （{@link #sourceCondition}）ときの実測（30 万エントリ・90 万行・165 MB を 30 ファイルに
+     * 分けたもの、Windows 11 / JDK 11、5 回の中央値を 3 ラウンド取った中央値）:
+     * mapper 912ms → 334ms、sql 1,011ms → 428ms、parameters 872ms → 311ms、
+     * thread 893ms → 295ms、mapper + grep 987ms → 399ms。
+     * source は全ファイルに一致 887ms → 4ms、5 ファイルに一致 971ms → 14ms、
+     * それに mapper を併用 994ms → 69ms。以前は 17 列をすべて作ってから照合していた。
      */
     private static Result scanWithJavaFilter(Connection conn, CharSequence where, List<Object> params,
             SqlQueryFilter filter, long offset, long limit) throws SQLException {
@@ -170,12 +225,8 @@ public final class SqlQuery {
             bindParams(ps, params);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    EntryRow e = null;
-                    if (needsColumns) {
-                        e = SqlLogIndex.rowFrom(rs);
-                        if (!matchesRegexFilters(e, filter)) {
-                            continue;
-                        }
+                    if (needsColumns && !matchesRegexFilters(rs, filter)) {
+                        continue;
                     }
                     if (needsRaw) {
                         long start = rs.getLong(4);
@@ -195,10 +246,7 @@ public final class SqlQuery {
                         }
                     }
                     if (total >= offset && page.size() < limit) {
-                        if (e == null) {
-                            e = SqlLogIndex.rowFrom(rs);
-                        }
-                        page.add(e);
+                        page.add(SqlLogIndex.rowFrom(rs));
                     }
                     total++;
                 }
@@ -215,24 +263,24 @@ public final class SqlQuery {
 
     /**
      * SQL 側で表現できない正規表現条件だけを判定する。
-     * sql_type / 時刻 / elapsed / row_count / complete は WHERE 句で既に絞り込み済み。
+     * sql_type / 時刻 / elapsed / row_count / complete / source は WHERE 句で既に絞り込み済み。
+     *
+     * <p>列の文字列は、照合に使う列だけを取り出す（一致しない行のために使わない文字列を作らない）。
+     * 列番号は {@link SqlLogIndex#rowFrom} と同じ。
      */
-    private static boolean matchesRegexFilters(EntryRow e, SqlQueryFilter f) {
-        if (f.sourceRe != null && !f.sourceRe.matcher(e.source).find()) {
+    private static boolean matchesRegexFilters(ResultSet rs, SqlQueryFilter f) throws SQLException {
+        if (f.mapperRe != null && !f.mapperRe.matcher(rs.getString(8)).find()) {
             return false;
         }
-        if (f.mapperRe != null && !f.mapperRe.matcher(e.mapper).find()) {
+        if (f.threadRe != null && !f.threadRe.matcher(rs.getString(14)).find()) {
             return false;
         }
-        if (f.threadRe != null && !f.threadRe.matcher(e.thread).find()) {
-            return false;
-        }
-        if (f.sqlRe != null && !f.sqlRe.matcher(e.sqlText).find()) {
+        if (f.sqlRe != null && !f.sqlRe.matcher(rs.getString(10)).find()) {
             return false;
         }
         if (f.parametersRe != null) {
-            String params = e.parameters != null ? e.parameters : "";
-            if (!f.parametersRe.matcher(params).find()) {
+            String params = rs.getString(11);
+            if (!f.parametersRe.matcher(params != null ? params : "").find()) {
                 return false;
             }
         }
@@ -264,9 +312,9 @@ public final class SqlQuery {
         return reader.read(start, len, into);
     }
 
-    /** 列（mapper / sql_text / parameters / thread / source）の絞り込みがあるか。 */
+    /** 列（mapper / sql_text / parameters / thread）の絞り込みがあるか。source は SQL 側で絞り込み済み。 */
     private static boolean needsRegexColumns(SqlQueryFilter f) {
         return f.mapperRe != null || f.sqlRe != null || f.parametersRe != null
-                || f.threadRe != null || f.sourceRe != null;
+                || f.threadRe != null;
     }
 }

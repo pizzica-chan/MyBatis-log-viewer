@@ -6,6 +6,7 @@ import java.sql.Connection;
 import java.util.Collections;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -107,7 +108,8 @@ class SqlQueryTest {
 
     /**
      * SQL 押し下げパスと Java 走査パスが同じ結果になることを確認する。
-     * 走査側は常に真となる source 正規表現を足すだけにして、絞り込み条件は揃える。
+     * 走査側は常に真となる thread 正規表現（空の正規表現）を足すだけにして、絞り込み条件は揃える。
+     * source は SQL 側へ押し下げるので、走査経路を強制する目的には使えない。
      */
     @Test
     void sqlPushdownMatchesJavaScan() throws Exception {
@@ -118,7 +120,7 @@ class SqlQueryTest {
             SqlLogIndex.buildIndex(conn, Collections.singletonList(sample), null, LogFormatSpec.DEFAULT);
             for (SqlQueryFilter pushdown : pushdownFilters()) {
                 SqlQueryFilter scan = copyOf(pushdown);
-                scan.sourceRe = SqlQueryFilter.compileRegex(".");
+                scan.threadRe = java.util.regex.Pattern.compile("");
                 assertFalse(pushdown.needsJavaFilter());
                 assertTrue(scan.needsJavaFilter());
 
@@ -148,6 +150,138 @@ class SqlQueryTest {
             // 範囲外 offset ではページが空になる
             assertEquals(0, SqlQuery.querySql(conn, new SqlQueryFilter(), all.total, 100).page.size());
         }
+    }
+
+    /**
+     * source の絞り込みを files で判定して SQL に押し下げても、エントリごとに照合した場合と
+     * 同じ結果になること（件数・並び・ページング・他の条件との併用）。
+     */
+    @Test
+    void sourceFilterAcrossFiles(@TempDir Path tmp) throws Exception {
+        Path a = writeLog(tmp, "a.log",
+                block("00:00:01", "exec-1", "com.example.AMapper.select", "SELECT * FROM a", "A1")
+                        + block("00:00:04", "exec-1", "com.example.AMapper.select", "SELECT * FROM a", "A2"));
+        Path b = writeLog(tmp, "b.log",
+                block("00:00:02", "exec-2", "com.example.BMapper.update", "UPDATE b SET x = ?", "B1")
+                        + block("00:00:05", "exec-3", "com.example.BMapper.select", "SELECT * FROM b", "B2"));
+        Path c = writeLog(tmp, "c.log",
+                block("00:00:03", "exec-1", "com.example.CMapper.select", "SELECT * FROM c", "C1"));
+
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, java.util.Arrays.asList(a, b, c), null, LogFormatSpec.DEFAULT);
+
+            SqlQuery.Result onlyB = SqlQuery.querySql(conn, sourceFilter("b\\.log"), 0, 10);
+            assertEquals(2, onlyB.total);
+            assertEquals(java.util.Arrays.asList("B1", "B2"), params(onlyB));
+            assertTrue(onlyB.page.get(0).source.endsWith("b.log"), onlyB.page.get(0).source);
+
+            // 大文字小文字を無視する（エントリごとに照合していたときと同じ）
+            assertEquals(2, SqlQuery.querySql(conn, sourceFilter("B\\.LOG"), 0, 10).total);
+
+            // 複数ファイルにまたがっても時刻順で、offset / limit が効く
+            SqlQuery.Result ab = SqlQuery.querySql(conn, sourceFilter("[ab]\\.log"), 1, 2);
+            assertEquals(4, ab.total);
+            assertEquals(java.util.Arrays.asList("B1", "A2"), params(ab));
+
+            SqlQuery.Result none = SqlQuery.querySql(conn, sourceFilter("nomatch"), 0, 10);
+            assertEquals(0, none.total);
+            assertTrue(none.page.isEmpty());
+
+            assertEquals(5, SqlQuery.querySql(conn, sourceFilter("\\.log"), 0, 10).total);
+
+            SqlQueryFilter withType = sourceFilter("b\\.log");
+            withType.sqlTypes = SqlQueryFilter.parseSqlTypeFilter("UPDATE");
+            assertEquals(java.util.Arrays.asList("B1"), params(SqlQuery.querySql(conn, withType, 0, 10)));
+
+            // Java 側で判定する条件と併せても、source の絞り込みが効いたままになる
+            SqlQueryFilter withThread = sourceFilter("b\\.log");
+            withThread.threadRe = SqlQueryFilter.compileRegex("exec-3");
+            SqlQuery.Result t = SqlQuery.querySql(conn, withThread, 0, 10);
+            assertEquals(java.util.Arrays.asList("B2"), params(t));
+            // 照合に使う列だけを取り出しても、ページの行はすべての列を持つ
+            SqlLogIndex.EntryRow row = t.page.get(0);
+            assertEquals("com.example.BMapper.select", row.mapper);
+            assertEquals("SELECT", row.sqlType);
+            assertEquals("SELECT * FROM b", row.sqlText);
+            assertEquals("exec-3", row.thread);
+            assertTrue(row.source.endsWith("b.log"), row.source);
+
+            SqlQueryFilter bySql = sourceFilter("[bc]\\.log");
+            bySql.sqlRe = SqlQueryFilter.compileRegex("FROM c");
+            assertEquals(java.util.Arrays.asList("C1"), params(SqlQuery.querySql(conn, bySql, 0, 10)));
+
+            SqlQueryFilter withGrep = sourceFilter("[ab]\\.log");
+            withGrep.grepRe = SqlQueryFilter.compileRegex("B2");
+            withGrep.grepText = "B2";
+            assertEquals(java.util.Arrays.asList("B2"), params(SqlQuery.querySql(conn, withGrep, 0, 10)));
+        }
+    }
+
+    /**
+     * source の条件を足しても、一覧の実行計画は source なしと同じく索引を時刻順に辿り、
+     * 並べ直しを入れないこと。ファイル数が少ないと SQLite が files を外側に回すことがあるため。
+     */
+    @Test
+    void sourceConditionKeepsIndexOrder(@TempDir Path tmp) throws Exception {
+        java.util.List<Path> logs = new java.util.ArrayList<>();
+        for (int f = 0; f < 3; f++) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 200; i++) {
+                String time = String.format("00:%02d:%02d", f * 20 + i / 60, i % 60);
+                String mapper = i % 10 == 0 ? "com.example.AMapper.update" : "com.example.AMapper.select";
+                String sql = i % 10 == 0 ? "UPDATE a SET x = ?" : "SELECT * FROM a";
+                sb.append(block(time, "exec-1", mapper, sql, "p" + i));
+            }
+            logs.add(writeLog(tmp, "app" + f + ".log", sb.toString()));
+        }
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(conn, logs, null, LogFormatSpec.DEFAULT);
+            String cond = SqlQuery.sourceCondition(conn, SqlQueryFilter.compileRegex("app0"));
+            assertTrue(cond.startsWith(" AND "), cond);
+            String order = " ORDER BY e.ts_millis, e.file_id, e.line_no LIMIT 200";
+            for (String where : new String[] {"WHERE 1=1" + cond,
+                    "WHERE 1=1 AND e.sql_type IN ('UPDATE')" + cond}) {
+                StringBuilder plan = new StringBuilder();
+                try (java.sql.Statement st = conn.createStatement();
+                     java.sql.ResultSet rs = st.executeQuery(
+                             "EXPLAIN QUERY PLAN " + SqlLogIndex.selectBase() + where + order)) {
+                    while (rs.next()) {
+                        plan.append(rs.getString(4)).append('\n');
+                    }
+                }
+                assertFalse(plan.toString().contains("USE TEMP B-TREE"), where + "\n" + plan);
+            }
+        }
+    }
+
+    private static Path writeLog(Path dir, String name, String content) throws java.io.IOException {
+        Path path = dir.resolve(name);
+        java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return path;
+    }
+
+    /** MyBatis の 1 ブロック（Preparing / Parameters / Total か Updates）。パラメータを目印に使う。 */
+    private static String block(String time, String thread, String mapper, String sql, String param) {
+        String head = "2026-06-15 " + time + ".000[" + thread + "][DEBUG][" + mapper + "] - ";
+        String tail = sql.startsWith("SELECT") ? "<==      Total: 1" : "<==    Updates: 1";
+        return head + "==>  Preparing: " + sql + "\n"
+                + head + "==> Parameters: " + param + "(String)\n"
+                + head + tail + "\n";
+    }
+
+    private static SqlQueryFilter sourceFilter(String regex) {
+        SqlQueryFilter f = new SqlQueryFilter();
+        f.sourceRe = SqlQueryFilter.compileRegex(regex);
+        return f;
+    }
+
+    /** ページの各行のパラメータ（{@code A1(String)} の値部分）。 */
+    private static java.util.List<String> params(SqlQuery.Result r) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (SqlLogIndex.EntryRow e : r.page) {
+            out.add(e.parameters.replace("(String)", ""));
+        }
+        return out;
     }
 
     private static java.util.List<SqlQueryFilter> pushdownFilters() {

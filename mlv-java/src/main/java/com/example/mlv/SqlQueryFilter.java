@@ -29,10 +29,14 @@ public final class SqlQueryFilter {
         return grepRe != null;
     }
 
-    /** SQL 側で表現できない条件があるか（ある場合のみ全件走査が必要）。 */
+    /**
+     * SQL 側で表現できない条件があるか（ある場合のみ全件走査が必要）。
+     * source はファイルごとに 1 回だけ照合して SQL の条件にするので含めない
+     * （{@link SqlQuery#sourceCondition}）。
+     */
     public boolean needsJavaFilter() {
         return mapperRe != null || sqlRe != null || parametersRe != null
-                || threadRe != null || sourceRe != null || grepRe != null;
+                || threadRe != null || grepRe != null;
     }
 
     public static Set<String> parseSqlTypeFilter(String value) {
