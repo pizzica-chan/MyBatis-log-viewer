@@ -712,6 +712,9 @@ public final class SqlLogIndex {
         // 組み込み書式のときは custom == null で、従来と同じ経路をそのまま通る。
         final LogFormat builtin = format.builtin();
         final CustomLogFormat custom = format.custom();
+        // 1 行ごとに確保しないよう、正規表現が当たったかの受け皿は使い回す
+        // （このメソッドはファイルごとに 1 本のスレッドで走る）。
+        final boolean[] matchedShape = new boolean[1];
         try (InputStream raw = Files.newInputStream(path);
              InputStream in = new BufferedInputStream(raw, 1 << 16);
              ByteLineReader reader = new ByteLineReader(in)) {
@@ -732,18 +735,18 @@ public final class SqlLogIndex {
                             ? LogParser.parse(builtin, reader.lineBuf, reader.lineLen) : null;
                 } else {
                     try {
-                        parsed = custom.parse(reader.lineBuf, reader.lineLen);
+                        parsed = custom.parse(reader.lineBuf, reader.lineLen, matchedShape);
                     } catch (CustomLogFormat.FormatFailure e) {
                         // 暴走した正規表現や壊れた定義。黙って固まる・原因不明で落ちるより、
                         // どの書式のどこで止めたかが分かる形で失敗させる。
                         throw new IOException(e.getMessage() + "（" + path + " の "
                                 + lineNo + " 行目）", e);
                     }
-                    // 利用者定義の書式には、バイト列だけで見るヘッダ判定が無い。
-                    // 一致しなかった行は継続行（スタックトレース等）として扱う。
-                    // 組み込み書式で数えている「ヘッダの形なのに読めなかった行」は、
-                    // ここでは区別できないので 0 件になる。
-                    header = parsed != null;
+                    // 利用者定義の書式では「正規表現が当たったか」がヘッダらしさにあたる。
+                    // 当たったのに parsed == null なら、日時として読めなかった行で、
+                    // 組み込み書式と同じく読み飛ばしとして数える。ここを parsed != null に
+                    // すると、日時書式だけ間違っている行が継続行に化けて、どこにも出ない。
+                    header = matchedShape[0];
                 }
 
                 if (parsed != null && MyBatisBlockParser.isPreparingLine(parsed)) {

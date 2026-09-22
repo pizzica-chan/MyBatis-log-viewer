@@ -119,6 +119,45 @@ class SqlLogIndexParseTest {
         }
     }
 
+    /**
+     * 利用者定義の書式で<strong>日時だけ読めない行</strong>を、継続行にせず読み飛ばしとして
+     * 数えること。
+     *
+     * <p>正規表現が当たったのに日時を読めない行は、直すべき書式がある行だ。継続行
+     * （スタックトレース）と同じ扱いにすると、読み飛ばし件数は 0 のまま、その行は
+     * どこにも出ない。ここでは <code>Parameters</code> の行だけ日時が壊れているので、
+     * <strong>SQL はできるのにパラメータだけ空</strong>という、いちばん気づきにくい
+     * 壊れ方になる。件数が出れば利用者は日時書式を疑える。
+     */
+    @Test
+    void countsLinesWhoseTimestampIsUnreadable(@TempDir Path tmp) throws Exception {
+        Path log = tmp.resolve("pipe.log");
+        Files.write(log, Arrays.asList(
+                "2026-06-15 00:19:11.705|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|==>  Preparing: SELECT id FROM users WHERE id = ?",
+                // 日時だけ壊れている（月が 13）。正規表現には当たる
+                "2026-13-15 00:19:11.706|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|==> Parameters: 1(Long)",
+                "2026-06-15 00:19:11.708|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|<==      Total: 1",
+                // 正規表現にも当たらない行は、今までどおり継続行として扱う
+                "\tat com.example.Hoge.run(Hoge.java:12)"),
+                StandardCharsets.UTF_8);
+        CustomLogFormat custom = LogFormatStore.create("pipe", "縦棒区切り",
+                "^(?<ts>[^|]+)\\|(?<level>[^|]*)\\|(?<thread>[^|]*)\\|(?<logger>[^|]*)"
+                        + "\\|(?<message>.*)$",
+                "yyyy-MM-dd HH:mm:ss.SSS");
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.BuildResult r = SqlLogIndex.buildIndex(
+                    conn, Collections.singletonList(log), null, LogFormatSpec.of(custom));
+            assertEquals(1, r.skippedLines,
+                    "日時を読めなかった 1 行だけを数える（継続行は数えない）");
+            assertEquals(1, r.entryCount);
+            SqlLogIndex.EntryRow row = findByMapper(conn, "UserMapper");
+            assertNull(row.parameters, "Parameters の行は取り込まれていない");
+        }
+    }
+
     // --- 指摘1: Preparing のみで Total が来ない（SQL 失敗） ---
 
     @Test

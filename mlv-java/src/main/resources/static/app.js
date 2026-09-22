@@ -475,10 +475,14 @@ function updateParseWarning(data) {
   }
   els.parseWarning.hidden = false;
   els.parseWarningDetails.open = false;
-  // 利用者定義の書式では、ここは 0 件のままになる（形だけの判定が無いので、一致しない行は
-  // すべて継続行として扱う）。その場合の手がかりは updateMeta の「0 件」の注記で出す。
-  els.parseWarningText.textContent =
-    `${skipped.toLocaleString()} 行を MyBatis SQL ブロックとして認識できませんでした。`;
+  // 利用者定義の書式でここに出るのは「正規表現は当たったが日時を読めなかった行」だけ。
+  // 直す先は日時書式なので、組み込みのときと言い分ける。
+  els.parseWarningText.textContent = data.log_format_custom
+    ? `${skipped.toLocaleString()} 行が、書式「${data.log_format_name}」の正規表現には` +
+      "当たりましたが、日時として読めませんでした。日時書式を見直してください" +
+      "（下の「ファイル名:行番号」の行をログから取り出し、「書式の管理」の" +
+      "「この行で試す」に貼ると理由が出ます。下に出る例は長いと末尾を切り詰めます）。"
+    : `${skipped.toLocaleString()} 行を MyBatis SQL ブロックとして認識できませんでした。`;
   els.parseWarningSamples.innerHTML = "";
   for (const s of data.skipped_samples || []) {
     const li = document.createElement("li");
@@ -538,8 +542,8 @@ function updateMeta(data) {
 /**
  * 利用者定義の書式で読み込んで SQL が 1 件も出なかったときに、手がかりを出す。
  *
- * この書式には「ヘッダらしさ」の形だけの判定が無いので、正規表現が外れた行はすべて
- * 継続行として扱われる。つまり読み飛ばし件数は 0 のままで、既存の警告は何も出ない。
+ * 正規表現が行にまったく当たらないと、その行は継続行として扱われる（読み飛ばしには
+ * 数えない。スタックトレースと見分けられないため）。つまり正規表現が丸ごと外れていると、
  * 画面には「0 件」とだけ出て、正規表現が外れているのか、ログに SQL が無いのかが
  * 区別できない。ここが利用者定義の書式でいちばん多いつまずき方になる。
  */
@@ -1264,7 +1268,12 @@ function syncLogFormatSelect(data) {
   // 初期値（既定書式）が入っているので、条件を付けないと「まだ判定していないのに
   // 既定書式が選ばれた」ように見える。
   if (data.log_format_auto && data.log_format_name && data.load_status === "ready") {
-    auto.textContent = `書式: 自動判定（${data.log_format_name}）`;
+    // 利用者定義が選ばれたことは必ず出す。自動判定は一致した行数で決めるので、
+    // 広い正規表現の書式は組み込みを越えて選ばれうる。ここが黙っていると、
+    // 自分が登録した書式で読まれていることに気づけない。
+    auto.textContent = data.log_format_custom
+      ? `書式: 自動判定（${data.log_format_name}・利用者定義）`
+      : `書式: 自動判定（${data.log_format_name}）`;
   } else {
     auto.textContent = "書式: 自動判定";
   }
