@@ -46,7 +46,7 @@ public final class SqlQuery {
         appendConditions(where, params, filter);
 
         if (!filter.needsJavaFilter()) {
-            // 正規表現・grep が無ければ件数もページングも SQL 側で完結できる
+            // 正規表現・grep がなければ件数もページングも SQL 側で完結できる
             long total = countMatches(conn, where, params);
             List<EntryRow> page = limit > 0
                     ? fetchPage(conn, where, params, offset, limit)
@@ -155,7 +155,7 @@ public final class SqlQuery {
 
         boolean needsRaw = filter.needsRaw();
         boolean needsColumns = needsRegexColumns(filter);
-        // メタ文字が無ければ「部分一致」なので、正規表現を通さずバイト列で探せる
+        // メタ文字がなければ「部分一致」なので、正規表現を通さずバイト列で探せる
         byte[] literal = needsRaw && SqlQueryFilter.hasNoRegexMeta(filter.grepText)
                 ? SqlLogIndex.toLowerAscii(filter.grepText.getBytes(StandardCharsets.UTF_8))
                 : null;

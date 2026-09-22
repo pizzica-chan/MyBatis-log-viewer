@@ -26,7 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>試験内容:
  * <ul>
  *   <li>正規表現を含む条件の JSON 往復（エスケープ、未完結パターンでも読み出せること）</li>
- *   <li>検索条件に無いキー（画面の他の入力欄や未知のキー）を捨てること</li>
+ *   <li>検索条件にないキー（画面の他の入力欄や未知のキー）を捨てること</li>
  *   <li>同名の上書き、削除、件数上限</li>
  *   <li>壊れた JSON や JSON として不正な {@code \d} を読んだときの失敗</li>
  *   <li>項目が 1 件だけ壊れても、読める件はそのまま返すこと</li>
@@ -89,14 +89,14 @@ class SavedSearchesStoreTest {
         assertEquals("[unterminated", store().list().get(0).fields.get("mapper"));
     }
 
-    /** mode は search だけを受け付けること（mlv に追跡は無い）。 */
+    /** mode は search だけを受け付けること（mlv に追跡はない）。 */
     @Test
     void rejectsUnknownMode() throws IOException {
         assertThrows(IllegalArgumentException.class,
                 () -> store().upsert("追跡", "trace", Collections.<String, String>emptyMap()));
     }
 
-    /** 検索条件に無いキー（画面の他の入力欄や未知のキー）は捨てること。 */
+    /** 検索条件にないキー（画面の他の入力欄や未知のキー）は捨てること。 */
     @Test
     void dropsUnknownFields() throws IOException {
         Map<String, String> fields = new HashMap<String, String>();
@@ -142,7 +142,7 @@ class SavedSearchesStoreTest {
         assertFalse(store().delete(saved.id));
     }
 
-    /** ファイルが無いときは空一覧で、例外にしないこと。 */
+    /** ファイルがないときは空一覧で、例外にしないこと。 */
     @Test
     void missingFileIsEmpty() throws IOException {
         assertTrue(store().list().isEmpty());

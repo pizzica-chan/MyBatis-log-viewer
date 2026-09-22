@@ -54,8 +54,8 @@ java -jar mlv-java/target/mlv-java.jar --dir samples
 - 利用者定義の書式では `message` を必須にしている。MyBatis の `Preparing:` /
   `Parameters:` / `Total:` をメッセージ部から探すため、**ここが空だと SQL が 1 件も
   見つからない索引が黙ってできあがる**。`thread` と `logger` はブロックの対応付けの鍵
-  （`MyBatisBlockParser.blockKey`）なので、無いと別スレッドの SQL が混ざる
-- 利用者定義の書式には**バイト列だけのヘッダ判定が無い**。代わりに
+  （`MyBatisBlockParser.blockKey`）なので、ないと別スレッドの SQL が混ざる
+- 利用者定義の書式には**バイト列だけのヘッダ判定がない**。代わりに
   `CustomLogFormat.parse` が「正規表現に一致したか」を返し、それをヘッダ行かどうかの目安として使う。
   **一致したのに読めなかった行（日時が壊れている）は読み飛ばしとして数える**こと ――
   継続行と混ぜると、日時書式の間違いが画面のどこにも出ない。正規表現がそもそも

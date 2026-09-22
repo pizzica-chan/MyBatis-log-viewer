@@ -162,7 +162,7 @@ public final class SqlLogIndex {
             // 規模を上げた 8ファイル・240万件も各 10 回測ったが、中央値 維持 16.94s /
             // 一括 16.43s（差 3%）で分布が大きく重なり、優劣を判定できなかった。
             // 以前は単発測定で「一括が 4% 有利に転じる」と書いていたが、その差は
-            // 測定のばらつきに埋もれる。試したどの規模でも一括が有利という証拠は無い。
+            // 測定のばらつきに埋もれる。試したどの規模でも一括が有利という証拠はない。
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_ts ON entries(ts_millis, file_id, line_no)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_mapper ON entries(mapper)");
             // SQL 種別で絞りつつ時刻順に並べる一覧検索用。単独列の idx_entries_sql_type を包含する
@@ -244,7 +244,7 @@ public final class SqlLogIndex {
      * 取り込みに使った書式を meta に残す。再利用時に画面へ出すため。
      *
      * <p>フィンガープリントと同じトランザクションで書く。別に書くと、途中で落ちたときに
-     * 「索引は有効（fingerprint あり）なのに書式だけ無い」状態になりうるため。
+     * 「索引は有効（fingerprint あり）なのに書式だけない」状態になりうるため。
      */
     private static void saveLogFormat(Connection conn, LogFormatSpec format) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
@@ -291,7 +291,7 @@ public final class SqlLogIndex {
 
     /**
      * クエリプランナ用の統計を生成する。
-     * これが無いと SQLite が sql_type / ts_millis のインデックスを選び損ねることがある。
+     * これがないと SQLite が sql_type / ts_millis のインデックスを選び損ねることがある。
      *
      * <p>サンプリング（{@link #ANALYSIS_LIMIT}）のため行数に関係なく数十ミリ秒で終わる。
      * 索引構成を変えると既存の統計は古くなるので、有無を判定せず毎回作り直す。
@@ -301,7 +301,7 @@ public final class SqlLogIndex {
             st.execute("PRAGMA analysis_limit = " + ANALYSIS_LIMIT);
             st.execute("ANALYZE");
         } catch (SQLException ignored) {
-            // 統計が無くても検索自体は動くため失敗は無視する
+            // 統計がなくても検索自体は動くため失敗は無視する
         }
     }
 

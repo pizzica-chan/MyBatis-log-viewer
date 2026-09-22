@@ -237,7 +237,7 @@ public final class LogServer {
         }
         final Path root = logRoot;
         final List<Path> paths = new ArrayList<>(logPaths);
-        // 明示指定が無ければ先頭ファイルの冒頭から判定する。判定は取り込み開始時の 1 回だけで、
+        // 明示指定がなければ先頭ファイルの冒頭から判定する。判定は取り込み開始時の 1 回だけで、
         // 1 行あたりの処理は確定した 1 書式ぶんしか走らない。
         final LogFormatSpec requested = requestedFormat;
         final LogFormatSpec format = requested != null
@@ -1159,7 +1159,7 @@ public final class LogServer {
                 + (why != null ? why : "日時書式「" + format.timestampPattern() + "」を見直してください");
     }
 
-    /** 試し打ちの失敗文に出す呼び名。id を入れていればそれ、無ければ日本語の呼び名。 */
+    /** 試し打ちの失敗文に出す呼び名。id を入れていればそれ、なければ日本語の呼び名。 */
     private static String tryLabel(String id) {
         String trimmed = id != null ? id.trim() : "";
         return trimmed.isEmpty() ? "いま入力中のもの" : trimmed;
@@ -1190,7 +1190,7 @@ public final class LogServer {
         }
     }
 
-    /** 無い・null を空文字に均す。「入れてください」と言えるようにするため。 */
+    /** ない・null を空文字に均す。「入れてください」と言えるようにするため。 */
     private static String orEmpty(String value) {
         return value != null ? value : "";
     }
@@ -1264,7 +1264,7 @@ public final class LogServer {
         }
     }
 
-    /** JSON の文字列フィールド。無い・null なら null。文字列以外は 400 相当の例外。 */
+    /** JSON の文字列フィールド。ない・null なら null。文字列以外は 400 相当の例外。 */
     private static String jsonString(JsonObject obj, String key) {
         if (!obj.has(key) || obj.get(key).isJsonNull()) {
             return null;
