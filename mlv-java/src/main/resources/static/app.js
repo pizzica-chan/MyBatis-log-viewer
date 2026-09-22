@@ -1382,11 +1382,13 @@ async function renderLogFormatList() {
     info.appendChild(detail);
     li.appendChild(info);
 
+    const buttons = document.createElement("div");
+    buttons.className = "saved-search-buttons";
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "編集";
     editBtn.addEventListener("click", () => editLogFormat(format));
-    li.appendChild(editBtn);
+    buttons.appendChild(editBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
@@ -1408,7 +1410,8 @@ async function renderLogFormatList() {
         alert(e.message || "削除に失敗しました。");
       }
     });
-    li.appendChild(deleteBtn);
+    buttons.appendChild(deleteBtn);
+    li.appendChild(buttons);
     els.logFormatList.appendChild(li);
   }
 }
