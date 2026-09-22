@@ -475,13 +475,14 @@ function updateParseWarning(data) {
   }
   els.parseWarning.hidden = false;
   els.parseWarningDetails.open = false;
-  // 利用者定義の書式でここに出るのは「正規表現は当たったが日時を読めなかった行」だけ。
-  // 直す先は日時書式なので、組み込みのときと言い分ける。
+  // 利用者定義の書式でここに出るのは「正規表現は一致したが日時を読めなかった行」が主。
+  // 先頭の孤立行（一致しない行）も件数に含まれる。直す先は日時書式なので言い分ける。
   els.parseWarningText.textContent = data.log_format_custom
     ? `${skipped.toLocaleString()} 行が、書式「${data.log_format_name}」の正規表現には` +
-      "当たりましたが、日時として読めませんでした。日時書式を見直してください" +
+      "一致しましたが、日時として読めませんでした。日時書式を見直してください" +
       "（下の「ファイル名:行番号」の行をログから取り出し、「書式の管理」の" +
-      "「この行で試す」に貼ると理由が出ます。下に出る例は長いと末尾を切り詰めます）。"
+      "「この行で試す」に貼ると理由が出ます。先頭の孤立行など、一致しない行も件数に含まれます。" +
+      "下に出る例は長いと末尾を切り詰めます）。"
     : `${skipped.toLocaleString()} 行を MyBatis SQL ブロックとして認識できませんでした。`;
   els.parseWarningSamples.innerHTML = "";
   for (const s of data.skipped_samples || []) {
@@ -495,7 +496,7 @@ function updateMeta(data) {
   if (data.directory) els.logDir.value = data.directory;
   // 書式のプルダウンは、この先の早期 return より前に作り直す。ディレクトリ未選択・
   // 読み込み中・読み込み失敗のときも、登録した書式を選べるようにしておかないと、
-  // 「登録したのに 1 回目の読み込みで指定できない」という詰まり方をする。
+  // 「登録したのに 1 回目の読み込みで指定できない」という状態になる。
   syncLogFormatSelect(data);
   if (!data.files || data.files.length === 0) {
     metaRange = { first: null, last: null };
@@ -542,7 +543,7 @@ function updateMeta(data) {
 /**
  * 利用者定義の書式で読み込んで SQL が 1 件も出なかったときに、手がかりを出す。
  *
- * 正規表現が行にまったく当たらないと、その行は継続行として扱われる（読み飛ばしには
+ * 正規表現が行にまったく一致しないと、その行は継続行として扱われる（読み飛ばしには
  * 数えない。スタックトレースと見分けられないため）。つまり正規表現が丸ごと外れていると、
  * 画面には「0 件」とだけ出て、正規表現が外れているのか、ログに SQL が無いのかが
  * 区別できない。ここが利用者定義の書式でいちばん多いつまずき方になる。
@@ -553,7 +554,7 @@ function updateCustomFormatHint(data) {
   els.formatFileError.hidden = !show;
   els.formatFileError.textContent = show
     ? `書式「${data.log_format_name}」で読み込みましたが、SQL は 0 件でした。` +
-      "正規表現が行に当たっていないか、message に MyBatis の出力が入っていない可能性があります。" +
+      "正規表現が行に一致していないか、message に MyBatis の出力が入っていない可能性があります。" +
       "「書式の管理」の「この行で試す」に、ログの 1 行を貼って確かめてください。"
     : "";
 }

@@ -6,7 +6,7 @@ import java.util.Locale;
 
 /**
  * MyBatis の Parameters ログ（{@code 1(Long), Alice(String)} 形式）を解析し、
- * PreparedStatement の {@code ?} に当てはめた SQL 文字列を生成する。
+ * PreparedStatement の {@code ?} にパラメータを割り当てた SQL 文字列を生成する。
  */
 public final class SqlParameterBinder {
 
@@ -46,7 +46,7 @@ public final class SqlParameterBinder {
         String warning = null;
         if (literals.size() != placeholderCount) {
             warning = "プレースホルダ " + placeholderCount + " 個に対しパラメータ "
-                    + literals.size() + " 個（先頭から順に当てはめ）";
+                    + literals.size() + " 個（先頭から順に割り当て）";
         }
         return new BindResult(bound, warning);
     }

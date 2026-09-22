@@ -712,7 +712,7 @@ public final class SqlLogIndex {
         // 組み込み書式のときは custom == null で、従来と同じ経路をそのまま通る。
         final LogFormat builtin = format.builtin();
         final CustomLogFormat custom = format.custom();
-        // 1 行ごとに確保しないよう、正規表現が当たったかの受け皿は使い回す
+        // 1 行ごとに確保しないよう、正規表現に一致したかの受け皿は使い回す
         // （このメソッドはファイルごとに 1 本のスレッドで走る）。
         final boolean[] matchedShape = new boolean[1];
         try (InputStream raw = Files.newInputStream(path);
@@ -742,8 +742,8 @@ public final class SqlLogIndex {
                         throw new IOException(e.getMessage() + "（" + path + " の "
                                 + lineNo + " 行目）", e);
                     }
-                    // 利用者定義の書式では「正規表現が当たったか」がヘッダらしさにあたる。
-                    // 当たったのに parsed == null なら、日時として読めなかった行で、
+                    // 利用者定義の書式では「正規表現に一致したか」がヘッダ行かどうかの目安になる。
+                    // 一致したのに parsed == null なら、日時として読めなかった行で、
                     // 組み込み書式と同じく読み飛ばしとして数える。ここを parsed != null に
                     // すると、日時書式だけ間違っている行が継続行に化けて、どこにも出ない。
                     header = matchedShape[0];

@@ -81,7 +81,7 @@ class SqlLogIndexParseTest {
     /**
      * 利用者定義の書式でも、SQL ブロックを同じように索引化できること。
      *
-     * <p>組み込み書式がどれも当たらない前置き（ここでは縦棒区切り）を正規表現で定義し、
+     * <p>組み込み書式のどれにも一致しない前置き（ここでは縦棒区切り）を正規表現で定義し、
      * Preparing / Parameters / Total が 1 件のブロックとして組み上がることを見る。
      * <strong>この経路が通らないと、行はすべて読めているのに SQL が 0 件になる</strong>
      * ―― 画面上は「取り込めているのに何も出ない」という、いちばん分かりにくい壊れ方をする。
@@ -123,7 +123,7 @@ class SqlLogIndexParseTest {
      * 利用者定義の書式で<strong>日時だけ読めない行</strong>を、継続行にせず読み飛ばしとして
      * 数えること。
      *
-     * <p>正規表現が当たったのに日時を読めない行は、直すべき書式がある行だ。継続行
+     * <p>正規表現に一致したのに日時を読めない行は、直すべき書式がある行だ。継続行
      * （スタックトレース）と同じ扱いにすると、読み飛ばし件数は 0 のまま、その行は
      * どこにも出ない。ここでは <code>Parameters</code> の行だけ日時が壊れているので、
      * <strong>SQL はできるのにパラメータだけ空</strong>という、いちばん気づきにくい
@@ -135,12 +135,12 @@ class SqlLogIndexParseTest {
         Files.write(log, Arrays.asList(
                 "2026-06-15 00:19:11.705|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
                         + "|==>  Preparing: SELECT id FROM users WHERE id = ?",
-                // 日時だけ壊れている（月が 13）。正規表現には当たる
+                // 日時だけ壊れている（月が 13）。正規表現には一致する
                 "2026-13-15 00:19:11.706|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
                         + "|==> Parameters: 1(Long)",
                 "2026-06-15 00:19:11.708|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
                         + "|<==      Total: 1",
-                // 正規表現にも当たらない行は、今までどおり継続行として扱う
+                // 正規表現にも一致しない行は、今までどおり継続行として扱う
                 "\tat com.example.Hoge.run(Hoge.java:12)"),
                 StandardCharsets.UTF_8);
         CustomLogFormat custom = LogFormatStore.create("pipe", "縦棒区切り",
