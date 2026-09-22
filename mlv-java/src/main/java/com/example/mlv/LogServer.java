@@ -156,7 +156,7 @@ public final class LogServer {
         System.out.println("インデックス: " + IndexStore.tmpIndexDir() + " (MLV_HOME で repo 変更可)");
         System.out.println("保存した検索条件: " + savedSearches.file() + " (MLV_HOME で変更可)");
         System.out.println("利用者定義のログ書式: " + logFormats.file()
-                + " (無くてもよい。MLV_HOME で変更可)");
+                + " (書式を登録するまでファイルは作らない。MLV_HOME で変更可)");
         System.out.println("ログ書式: "
                 + (requestedFormat != null ? requestedFormat.displayName() : "自動判定"));
         if (logRoot != null) {
