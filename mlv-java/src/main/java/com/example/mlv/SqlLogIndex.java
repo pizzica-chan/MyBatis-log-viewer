@@ -968,7 +968,8 @@ public final class SqlLogIndex {
      * まとめて読んでおき、そこから切り出す。戻る要求や窓に収まらない大きなエントリが来たら
      * その場で読み直すので、返る内容は都度読んだ場合と同じになる。
      *
-     * <p>実測は {@code docs/performance-report.md} を参照。
+     * <p>実測は姉妹リポジトリ application-log-viewer の {@code docs/performance-report.md} を
+     * 参照（このリポジトリには置いていない）。
      */
     static final class SequentialRawReader implements Closeable {
         /** 窓の大きさ。MyBatis の 1 ブロックが数百バイト〜数 KB なので 64 KiB でまとめ読みできる。 */

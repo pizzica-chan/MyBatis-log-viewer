@@ -190,12 +190,14 @@ public final class SqlQuery {
      *       （エントリごとの seek を避ける）</li>
      *   <li>grep がメタ文字を含まないリテラルなら、UTF-8 デコードせずバイト列のまま探す
      *       （grep は ASCII だけ大文字小文字を無視するので、同じ畳み方で比べる）</li>
-     *   <li>mapper / sql_text / parameters などの文字列は、ページに載る行でだけ取り出す。
-     *       列の絞り込みがあるときも、照合に使う列だけを取り出す</li>
+     *   <li>mapper / sql_text / parameters などの文字列は、ページに載る行でだけ作る。
+     *       列の絞り込みがあるときも、照合に要る列だけを {@code getString} する
+     *       （{@code SELECT} する列は変えていない）</li>
      * </ul>
-     * 実測は {@code docs/performance-report.md} を参照。
+     * 実測は姉妹リポジトリ application-log-viewer の {@code docs/performance-report.md} を参照
+     * （このリポジトリには置いていない）。
      *
-     * <p>列の絞り込みで照合に使う列だけを取り出し、source を SQL へ押し下げた
+     * <p>列の絞り込みで照合に要る列だけを文字列にし、source を SQL へ押し下げた
      * （{@link #sourceCondition}）ときの実測（30 万エントリ・90 万行・165 MB を 30 ファイルに
      * 分けたもの、Windows 11 / JDK 11、5 回の中央値を 3 ラウンド取った中央値）:
      * mapper 912ms → 334ms、sql 1,011ms → 428ms、parameters 872ms → 311ms、
@@ -265,7 +267,8 @@ public final class SqlQuery {
      * SQL 側で表現できない正規表現条件だけを判定する。
      * sql_type / 時刻 / elapsed / row_count / complete / source は WHERE 句で既に絞り込み済み。
      *
-     * <p>列の文字列は、照合に使う列だけを取り出す（一致しない行のために使わない文字列を作らない）。
+     * <p>列の文字列は、照合に要るものだけを {@code getString} する
+     * （一致しない行のために使わない文字列を作らない）。
      * 列番号は {@link SqlLogIndex#rowFrom} と同じ。
      */
     private static boolean matchesRegexFilters(ResultSet rs, SqlQueryFilter f) throws SQLException {
