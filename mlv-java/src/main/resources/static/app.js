@@ -475,13 +475,13 @@ function updateParseWarning(data) {
   }
   els.parseWarning.hidden = false;
   els.parseWarningDetails.open = false;
-  // 利用者定義の書式でここに出るのは「正規表現は一致したが日時を読めなかった行」が主。
-  // 先頭の孤立行（一致しない行）も件数に含まれる。直す先は日時書式なので言い分ける。
+  // 利用者定義の書式でここに出るのは「正規表現は一致したが日時を読めなかった行」だけ。
+  // 直す先は日時書式なので、組み込みのときと言い分ける。
   els.parseWarningText.textContent = data.log_format_custom
     ? `${skipped.toLocaleString()} 行が、書式「${data.log_format_name}」の正規表現には` +
       "一致しましたが、日時として読めませんでした。日時書式を見直してください" +
       "（下の「ファイル名:行番号」の行をログから取り出し、「書式の管理」の" +
-      "「この行で試す」に貼ると理由が出ます。先頭の孤立行など、一致しない行も件数に含まれます。" +
+      "「この行で試す」に貼ると理由が出ます。" +
       "下に出る例は長いと末尾を切り詰めます）。"
     : `${skipped.toLocaleString()} 行を MyBatis SQL ブロックとして認識できませんでした。`;
   els.parseWarningSamples.innerHTML = "";

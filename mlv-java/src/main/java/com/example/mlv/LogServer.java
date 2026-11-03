@@ -1198,7 +1198,7 @@ public final class LogServer {
     // ---- API: saved-searches ----------------------------------------------
 
     /**
-     * 検索・追跡条件の保存。値は正規表現を含みうるが、ここでは文字列として読み書きするだけ。
+     * 検索条件の保存。値は正規表現を含みうるが、ここでは文字列として読み書きするだけ。
      * コンパイルやマッチは行わない。
      */
     private void handleSavedSearches(HttpExchange ex) throws IOException {
