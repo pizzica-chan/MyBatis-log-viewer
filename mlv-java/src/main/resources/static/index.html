@@ -29,7 +29,7 @@
       ログディレクトリ
       <div class="dir-input">
         <input id="log-dir" placeholder="例: C:\logs\app">
-        <select id="log-format" title="ログの書式。自動判定は先頭ファイルの冒頭を見て判定します">
+        <select id="log-format" title="ログの書式。自動判定では、先頭ファイルの冒頭の行に最もよく一致する書式を選びます">
           <option value="auto">書式: 自動判定</option>
           <option value="default">書式: 既定 [Thread][LEVEL][Logger]</option>
           <option value="spring-boot">書式: Spring Boot 既定</option>
@@ -220,7 +220,7 @@
         </thead>
         <tbody id="stats-mappers"></tbody>
       </table>
-      <h3 class="stats-subheading">遅い SQL TOP 20（検索条件内）</h3>
+      <h3 class="stats-subheading">遅い SQL TOP 20（検索した Mapper の中）</h3>
       <p id="stats-slow-hint" class="stats-mapper-hint">Mapper を検索すると表示されます</p>
       <table class="stats-table">
         <thead>
@@ -267,10 +267,10 @@
     <form method="dialog" class="regex-samples-form">
       <h2>正規表現サンプル</h2>
       <p class="regex-samples-note">
-        正規表現（大文字小文字無視）に対応しているのは
+        正規表現（大文字小文字を区別しない）で指定できるのは
         <strong>Mapper・SQL・パラメータ・スレッド・全文検索 (grep)・ログファイル</strong>
-        の各フィールドのみです。
-        SQL 種別・状態・elapsed・件数・期間は正規表現ではなく、それぞれ列挙・数値・日時として扱われます。
+        の各欄だけです。
+        SQL 種別と状態は決まった値、elapsed と件数は数値、期間は日時として扱い、正規表現は使えません。
       </p>
       <table class="regex-samples-table">
         <thead>
@@ -318,7 +318,7 @@
       <p class="log-format-note">
         <strong>組み込みの書式のほうが読み込みは速いです。</strong>
         組み込みで問題なく SQL が読めるログなら、書式のプルダウンから
-        組み込みを選んでください。この画面は、組み込みだけでは読めない並びを
+        組み込みを選んでください。この画面は組み込みだけでは読めない並びを
         正規表現で定義するときに使います。登録した書式はプルダウンに並び、
         自動判定の候補にもなります。
       </p>
@@ -371,7 +371,7 @@
           <p>
             まず、読みたいログの 1 行を正規表現の欄にそのまま書き写します。
             次に、行によって変わる部分（日時やレベルなど）だけを、下の「部品」ボタンが
-            挿入する正規表現に置き換えます（その部分の文字列を消し、パターンを書くイメージです）。
+            挿入する正規表現に置き換えます。
             部品には <code>ts</code> などの名前が付いており、行に一致したときに取り出した値が一覧の列になります。
           </p>
           <table class="log-format-guide-table">
@@ -407,7 +407,7 @@
           <section class="log-format-guide-section">
           <h4>部品（正規表現のひな形）</h4>
           <p>
-            クリックすると正規表現の欄に差し込みます（カーソルの位置に入ります）。
+            クリックすると、正規表現の欄のカーソルの位置に差し込みます。
           </p>
 
           <p class="log-format-guide-subhead">日時（どれか 1 つを選ぶ）</p>
@@ -483,7 +483,7 @@
           <p class="log-format-callout">
             スレッド名が <code>[pool-1[worker-3]]</code> のように、角括弧の中にもう 1 組入っているときは、
             「スレッド <code>[main]</code>」ではなく「スレッド <code>[pool-1[worker-3]]</code>」のボタンを選んでください。
-            前者は最初の <code>]</code> で切れてしまい、行に一致しなくなります。
+            前者は最初の <code>]</code> までをスレッド名として取り出すため、行に一致しなくなります。
             後者は <code>[main]</code> のような普通の行にもそのまま使えます。
             ロガーが同じ形のときは、このボタンを押してから <code>thread</code> を <code>logger</code> に書き換えてください。
           </p>
@@ -621,8 +621,9 @@
               失敗させます（画面が固まったままにはなりません）。
             </li>
             <li>
-              <span class="log-format-li-title"><code>(?x)</code>（空白を無視する書き方）</span>
-              コメントの中に書いたグループを、アプリ側が「ある」と数えてしまいます。
+              <span class="log-format-li-title"><code>(?x)</code>（空白を無視し、<code>#</code> 以降をコメントにする書き方）</span>
+              コメントの中に書いたグループを、アプリ側が「ある」と数えてしまうため、
+              取り込み時にどの書式かを示して失敗します。
             </li>
           </ul>
           </section>

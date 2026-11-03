@@ -80,7 +80,7 @@ async function searchMapperStats() {
     if (slowItems.length === 0) {
       statsEls.slowHint.textContent = `「${q}」に一致する elapsed 付き SQL はありません`;
     } else {
-      statsEls.slowHint.textContent = `${slowItems.length.toLocaleString()} 件の遅い SQL（検索条件内）`;
+      statsEls.slowHint.textContent = `${slowItems.length.toLocaleString()} 件の遅い SQL（検索した Mapper の中）`;
     }
     renderSlow(slowItems);
   } catch (e) {
