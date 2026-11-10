@@ -40,8 +40,9 @@ public final class SqlParameterBinder {
         }
 
         List<String> literals = parseParameterLiterals(parameters.trim());
-        int placeholderCount = countPlaceholders(sql);
-        String bound = replacePlaceholders(sql, literals);
+        List<Integer> positions = choosePlaceholders(sql, literals.size());
+        int placeholderCount = positions.size();
+        String bound = replacePlaceholders(sql, positions, literals);
 
         String warning = null;
         if (literals.size() != placeholderCount) {
@@ -199,59 +200,97 @@ public final class SqlParameterBinder {
     }
 
     /**
-     * 文字列リテラル（{@code '…'}）の中の {@code ?} を読み飛ばしてよいか。
+     * どの {@code ?} がプレースホルダかを決める。パラメータの個数を手がかりにする。
      *
-     * <p>引用符を出てくるたびに開閉として数えるだけなので、コメントの中のアポストロフィ
-     * （{@code -- don't}）や {@code \'} のエスケープがあると開閉がずれ、それ以降の
-     * プレースホルダを 1 つも置き換えなくなる。引用符が奇数個の SQL は開閉を信用できない
-     * ので、リテラルを見分けず、すべての {@code ?} をプレースホルダとして扱う。
+     * <p>まず、すべての {@code ?} をプレースホルダとして数える。個数がパラメータと合えば
+     * それを採る（ほとんどの SQL はここで決まり、文字列リテラルやコメントの書き方に
+     * 左右されない）。合わないときだけ、文字列リテラル・引用識別子・ブロックコメントの
+     * 中の {@code ?} を外して数え直し（{@code LIKE '%?%'} など）、パラメータと個数が
+     * 合う読み方があればそれを採る。{@code \'} をエスケープとみるかどうかは DB によって
+     * 違うので、両方を試す。引用やコメントが閉じないまま終わる読み方は、個数が合っても
+     * 採らない（{@code 'it\'s ?' AND id = ?} を {@code \'} で閉じたと読むと、個数は 1 で
+     * 合うのに、置き換える相手が引用の中の {@code ?} になる）。どれも合わなければ、
+     * すべての {@code ?} に先頭から割り当てる（呼び出し側が個数の食い違いを警告する）。
+     *
+     * <p>行コメント（{@code --}）は見ない。MyBatis はログに出す SQL の改行を空白に
+     * 畳むので、コメントの終わりがどこかはログから分からない。
      */
-    private static boolean canTrackLiterals(String sql) {
-        int quotes = 0;
-        for (int i = 0; i < sql.length(); i++) {
-            if (sql.charAt(i) == '\'') {
-                quotes++;
-            }
+    private static List<Integer> choosePlaceholders(String sql, int parameterCount) {
+        List<Integer> all = placeholderPositions(sql, false, false);
+        if (all.size() == parameterCount) {
+            return all;
         }
-        return quotes % 2 == 0;
+        List<Integer> standard = placeholderPositions(sql, true, false);
+        if (standard != null && standard.size() == parameterCount) {
+            return standard;
+        }
+        List<Integer> backslash = placeholderPositions(sql, true, true);
+        if (backslash != null && backslash.size() == parameterCount) {
+            return backslash;
+        }
+        return all;
     }
 
     /**
-     * {@code ?} を数える。文字列リテラル（{@code '…'}）の中の {@code ?} はプレースホルダでは
-     * ないので数えない（{@code LIKE '%?%'} など）。
+     * {@code ?} の位置を集める。引用かコメントが閉じないまま終わったら {@code null}
+     * （その読み方は SQL に合っていない）。
+     *
+     * @param lexical          引用（一重・二重・バッククォート）とブロックコメントの中を外すか
+     * @param backslashEscapes 引用の中で {@code \} が次の 1 文字を打ち消すとみるか
      */
-    private static int countPlaceholders(String sql) {
-        boolean track = canTrackLiterals(sql);
-        int count = 0;
-        boolean inLiteral = false;
-        for (int i = 0; i < sql.length(); i++) {
+    private static List<Integer> placeholderPositions(String sql, boolean lexical,
+            boolean backslashEscapes) {
+        List<Integer> positions = new ArrayList<>();
+        char quote = 0;
+        boolean inComment = false;
+        int n = sql.length();
+        for (int i = 0; i < n; i++) {
             char c = sql.charAt(i);
-            if (c == '\'' && track) {
-                // '' （引用符のエスケープ）は閉じてすぐ開くので、反転を 2 回するだけでよい
-                inLiteral = !inLiteral;
-            } else if (c == '?' && !inLiteral) {
-                count++;
+            if (inComment) {
+                if (c == '*' && i + 1 < n && sql.charAt(i + 1) == '/') {
+                    inComment = false;
+                    i++;
+                }
+                continue;
+            }
+            if (quote != 0) {
+                if (backslashEscapes && c == '\\') {
+                    i++;
+                } else if (c == quote) {
+                    // '' （引用符のエスケープ）は閉じてすぐ開くので、特別扱いしなくてよい
+                    quote = 0;
+                }
+                continue;
+            }
+            if (lexical) {
+                if (c == '\'' || c == '"' || c == '`') {
+                    quote = c;
+                    continue;
+                }
+                if (c == '/' && i + 1 < n && sql.charAt(i + 1) == '*') {
+                    inComment = true;
+                    i++;
+                    continue;
+                }
+            }
+            if (c == '?') {
+                positions.add(i);
             }
         }
-        return count;
+        return (quote != 0 || inComment) ? null : positions;
     }
 
-    private static String replacePlaceholders(String sql, List<String> literals) {
-        boolean track = canTrackLiterals(sql);
+    /** {@code positions} の {@code ?} を、先頭から順に {@code literals} で置き換える。 */
+    private static String replacePlaceholders(String sql, List<Integer> positions,
+            List<String> literals) {
         StringBuilder out = new StringBuilder(sql.length() + literals.size() * 8);
-        int pi = 0;
-        boolean inLiteral = false;
-        for (int i = 0; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (c == '\'' && track) {
-                inLiteral = !inLiteral;
-            }
-            if (c == '?' && !inLiteral && pi < literals.size()) {
-                out.append(literals.get(pi++));
-            } else {
-                out.append(c);
-            }
+        int from = 0;
+        int count = Math.min(positions.size(), literals.size());
+        for (int k = 0; k < count; k++) {
+            int at = positions.get(k);
+            out.append(sql, from, at).append(literals.get(k));
+            from = at + 1;
         }
-        return out.toString();
+        return out.append(sql, from, sql.length()).toString();
     }
 }
