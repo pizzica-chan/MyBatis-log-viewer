@@ -72,4 +72,51 @@ class SqlParameterBinderTest {
                 "O'Brien(String)");
         assertEquals("SELECT 'O''Brien'", r.sql);
     }
+
+    /** MyBatis は null を型なしの {@code null} と書く。後ろの割り当てがずれないこと。 */
+    @Test
+    void bindBareNullParameters() {
+        SqlParameterBinder.BindResult first = SqlParameterBinder.bind(
+                "SELECT * FROM t WHERE a = ? AND b = ?",
+                "null, 1(Integer)");
+        assertEquals("SELECT * FROM t WHERE a = NULL AND b = 1", first.sql);
+        assertNull(first.warning);
+
+        SqlParameterBinder.BindResult middle = SqlParameterBinder.bind(
+                "UPDATE t SET a = ?, b = ?, c = ? WHERE id = ?",
+                "x(String), null, null, 5(Long)");
+        assertEquals("UPDATE t SET a = 'x', b = NULL, c = NULL WHERE id = 5", middle.sql);
+        assertNull(middle.warning);
+
+        SqlParameterBinder.BindResult last = SqlParameterBinder.bind(
+                "UPDATE t SET a = ? WHERE id = ?",
+                "1(Integer), null");
+        assertEquals("UPDATE t SET a = 1 WHERE id = NULL", last.sql);
+        assertNull(last.warning);
+
+        SqlParameterBinder.BindResult only = SqlParameterBinder.bind(
+                "SELECT * FROM t WHERE a = ?", "null");
+        assertEquals("SELECT * FROM t WHERE a = NULL", only.sql);
+    }
+
+    /** null で始まるだけの値（nullable など）は null として切り出さないこと。 */
+    @Test
+    void bindValueStartingWithNullIsNotNull() {
+        SqlParameterBinder.BindResult r = SqlParameterBinder.bind(
+                "SELECT * FROM t WHERE a = ? AND b = ?",
+                "nullable(String), a, b(String)");
+        assertEquals("SELECT * FROM t WHERE a = 'nullable' AND b = 'a, b'", r.sql);
+        assertNull(r.warning);
+    }
+
+    /** 文字列リテラルの中の ? はプレースホルダではない。 */
+    @Test
+    void bindSkipsQuestionMarkInsideLiteral() {
+        SqlParameterBinder.BindResult r = SqlParameterBinder.bind(
+                "SELECT * FROM t WHERE name LIKE '%?%' AND note = 'it''s ?' AND id = ?",
+                "7(Integer)");
+        assertEquals(
+                "SELECT * FROM t WHERE name LIKE '%?%' AND note = 'it''s ?' AND id = 7", r.sql);
+        assertNull(r.warning);
+    }
 }

@@ -77,29 +77,78 @@ public final class SqlParameterBinder {
         return out;
     }
 
-    /** MyBatis の {@code value(Type), value(Type)} を {@code )} 終端で分割する。 */
+    /**
+     * MyBatis の {@code value(Type), value(Type)} を {@code )} 終端で分割する。
+     *
+     * <p>値にカンマを含む文字列（{@code a, b(String)}）があるので、カンマだけでは区切れない。
+     * ただし null は型を付けずに {@code null} とだけ書かれる（MyBatis の
+     * {@code BaseJdbcLogger}）。{@code )} で終わらないので、セグメントの先頭に来た
+     * {@code null,} と末尾の {@code null} は、それだけで 1 つのパラメータとして切り出す。
+     * 切り出さないと {@code null, 1(Integer)} が 1 つの値 {@code null, 1} になり、
+     * 以降の {@code ?} への割り当てがすべてずれる。
+     *
+     * <p>文字列の値が {@code null, } で始まる場合（{@code null, x(String)} が 1 つの値）とは
+     * ログの上で見分けられない。null のパラメータのほうがずっと多いので、そちらに倒している。
+     */
     private static List<String> splitParameterSegments(String parameters) {
         List<String> segments = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
-        for (int i = 0; i < parameters.length(); i++) {
+        int i = 0;
+        int n = parameters.length();
+        while (i < n) {
+            if (cur.length() == 0) {
+                // セグメントの先頭。空白を飛ばし、型なしの null ならそれだけで区切る
+                while (i < n && parameters.charAt(i) == ' ') {
+                    i++;
+                }
+                int afterNull = bareNullEnd(parameters, i);
+                if (afterNull >= 0) {
+                    segments.add("null");
+                    i = afterNull;
+                    continue;
+                }
+                if (i >= n) {
+                    break;
+                }
+            }
             char c = parameters.charAt(i);
             cur.append(c);
-            if (c == ')' && i + 1 < parameters.length()) {
+            if (c == ')' && i + 1 < n) {
                 int j = i + 1;
-                while (j < parameters.length() && parameters.charAt(j) == ' ') {
+                while (j < n && parameters.charAt(j) == ' ') {
                     j++;
                 }
-                if (j < parameters.length() && parameters.charAt(j) == ',') {
+                if (j < n && parameters.charAt(j) == ',') {
                     segments.add(cur.toString());
                     cur.setLength(0);
                     i = j;
                 }
             }
+            i++;
         }
         if (cur.length() > 0) {
             segments.add(cur.toString());
         }
         return segments;
+    }
+
+    /**
+     * {@code from} から型なしの {@code null} が 1 つのパラメータとして書かれていれば、
+     * その次のパラメータの開始位置（区切りのカンマの次。末尾なら文字列の長さ）を返す。
+     * そうでなければ {@code -1}。
+     */
+    private static int bareNullEnd(String parameters, int from) {
+        if (!parameters.startsWith("null", from)) {
+            return -1;
+        }
+        int j = from + 4;
+        while (j < parameters.length() && parameters.charAt(j) == ' ') {
+            j++;
+        }
+        if (j >= parameters.length()) {
+            return j;
+        }
+        return parameters.charAt(j) == ',' ? j + 1 : -1;
     }
 
     private static String formatRawValue(String value) {
@@ -149,10 +198,19 @@ public final class SqlParameterBinder {
         return "'" + value.replace("'", "''") + "'";
     }
 
+    /**
+     * {@code ?} を数える。文字列リテラル（{@code '…'}）の中の {@code ?} はプレースホルダでは
+     * ないので数えない（{@code LIKE '%?%'} など）。
+     */
     private static int countPlaceholders(String sql) {
         int count = 0;
+        boolean inLiteral = false;
         for (int i = 0; i < sql.length(); i++) {
-            if (sql.charAt(i) == '?') {
+            char c = sql.charAt(i);
+            if (c == '\'') {
+                // '' （引用符のエスケープ）は閉じてすぐ開くので、反転を 2 回するだけでよい
+                inLiteral = !inLiteral;
+            } else if (c == '?' && !inLiteral) {
                 count++;
             }
         }
@@ -162,9 +220,13 @@ public final class SqlParameterBinder {
     private static String replacePlaceholders(String sql, List<String> literals) {
         StringBuilder out = new StringBuilder(sql.length() + literals.size() * 8);
         int pi = 0;
+        boolean inLiteral = false;
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
-            if (c == '?' && pi < literals.size()) {
+            if (c == '\'') {
+                inLiteral = !inLiteral;
+            }
+            if (c == '?' && !inLiteral && pi < literals.size()) {
                 out.append(literals.get(pi++));
             } else {
                 out.append(c);
