@@ -119,4 +119,17 @@ class SqlParameterBinderTest {
                 "SELECT * FROM t WHERE name LIKE '%?%' AND note = 'it''s ?' AND id = 7", r.sql);
         assertNull(r.warning);
     }
+
+    /**
+     * 引用符の開閉が合わない SQL（コメントの中のアポストロフィなど）では、リテラルを
+     * 見分けようとせず、今までどおりすべての ? に割り当てること。
+     */
+    @Test
+    void bindFallsBackWhenQuotesAreUnbalanced() {
+        SqlParameterBinder.BindResult r = SqlParameterBinder.bind(
+                "SELECT * FROM t /* user's rows */ WHERE a = ? AND b = ?",
+                "1(Integer), x(String)");
+        assertEquals("SELECT * FROM t /* user's rows */ WHERE a = 1 AND b = 'x'", r.sql);
+        assertNull(r.warning);
+    }
 }

@@ -199,15 +199,34 @@ public final class SqlParameterBinder {
     }
 
     /**
+     * 文字列リテラル（{@code '…'}）の中の {@code ?} を読み飛ばしてよいか。
+     *
+     * <p>引用符を出てくるたびに開閉として数えるだけなので、コメントの中のアポストロフィ
+     * （{@code -- don't}）や {@code \'} のエスケープがあると開閉がずれ、それ以降の
+     * プレースホルダを 1 つも置き換えなくなる。引用符が奇数個の SQL は開閉を信用できない
+     * ので、リテラルを見分けず、すべての {@code ?} をプレースホルダとして扱う。
+     */
+    private static boolean canTrackLiterals(String sql) {
+        int quotes = 0;
+        for (int i = 0; i < sql.length(); i++) {
+            if (sql.charAt(i) == '\'') {
+                quotes++;
+            }
+        }
+        return quotes % 2 == 0;
+    }
+
+    /**
      * {@code ?} を数える。文字列リテラル（{@code '…'}）の中の {@code ?} はプレースホルダでは
      * ないので数えない（{@code LIKE '%?%'} など）。
      */
     private static int countPlaceholders(String sql) {
+        boolean track = canTrackLiterals(sql);
         int count = 0;
         boolean inLiteral = false;
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
-            if (c == '\'') {
+            if (c == '\'' && track) {
                 // '' （引用符のエスケープ）は閉じてすぐ開くので、反転を 2 回するだけでよい
                 inLiteral = !inLiteral;
             } else if (c == '?' && !inLiteral) {
@@ -218,12 +237,13 @@ public final class SqlParameterBinder {
     }
 
     private static String replacePlaceholders(String sql, List<String> literals) {
+        boolean track = canTrackLiterals(sql);
         StringBuilder out = new StringBuilder(sql.length() + literals.size() * 8);
         int pi = 0;
         boolean inLiteral = false;
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
-            if (c == '\'') {
+            if (c == '\'' && track) {
                 inLiteral = !inLiteral;
             }
             if (c == '?' && !inLiteral && pi < literals.size()) {
