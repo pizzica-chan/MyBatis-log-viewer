@@ -358,6 +358,81 @@ class SqlLogIndexParseTest {
         }
     }
 
+    /**
+     * 読み飛ばした行に波括弧があっても、保存したサンプルがそのまま読み戻せること。
+     * 以前は最初の } でプレビューが切れ、そのあとに { があると実在しないサンプルが増えた。
+     */
+    @Test
+    void skippedSamplesSurviveBraces(@TempDir Path tmp) throws Exception {
+        String bad = "2026-13-15 00:19:11.706|DEBUG|exec-1|com.example.Foo"
+                + "|{\"ok\":true} tail {\"file_id\":9,\"line_no\":8} \"q\" back\\slash";
+        Path log = tmp.resolve("pipe.log");
+        Files.write(log, Arrays.asList(
+                "2026-06-15 00:19:11.705|DEBUG|exec-1|com.example.mapper.UserMapper.selectById"
+                        + "|==>  Preparing: SELECT id FROM users WHERE id = ?",
+                bad), StandardCharsets.UTF_8);
+        CustomLogFormat custom = LogFormatStore.create("pipe", "縦棒区切り",
+                "^(?<ts>[^|]+)\\|(?<level>[^|]*)\\|(?<thread>[^|]*)\\|(?<logger>[^|]*)"
+                        + "\\|(?<message>.*)$",
+                "yyyy-MM-dd HH:mm:ss.SSS");
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.buildIndex(
+                    conn, Collections.singletonList(log), null, LogFormatSpec.of(custom));
+            List<SkippedLine> stored = SqlLogIndex.getSkippedLineSamples(conn);
+            assertEquals(1, stored.size());
+            assertEquals(2, stored.get(0).lineNo);
+            assertEquals(bad, stored.get(0).preview);
+        }
+    }
+
+    /**
+     * 完了しないブロックがスレッドをまたいで溜まっても、スタックトレースを raw に含める
+     * 相手と、次の Preparing の手前で raw を止める位置が変わらないこと。
+     */
+    @Test
+    void manyIncompleteBlocksKeepTailAndCap(@TempDir Path dir) throws Exception {
+        List<String> all = new java.util.ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            String t = String.format("2026-06-15 08:15:%02d.000", i);
+            all.add(t + "[task-" + i + "][DEBUG][com.example.mapper.ProcMapper.call"
+                    + "] - ==>  Preparing: CALL do_work(?)");
+            all.add(t + "[task-" + i + "][DEBUG][com.example.mapper.ProcMapper.call"
+                    + "] - ==> Parameters: " + i + "(Integer)");
+            all.add(t + "[task-" + i + "][ERROR][com.example.Service] - failed " + i);
+            all.add("\tat com.example.Service.run(Service.java:" + i + ")");
+        }
+        Path log = dir.resolve("app.log");
+        Files.write(log, all, StandardCharsets.UTF_8);
+        try (Connection conn = SqlLogIndex.openMemory()) {
+            SqlLogIndex.BuildResult r = SqlLogIndex.buildIndex(
+                    conn, Collections.singletonList(log), null, LogFormatSpec.DEFAULT);
+            assertEquals(50, r.entryCount);
+            try (java.sql.Statement st = conn.createStatement();
+                 java.sql.ResultSet rs = st.executeQuery(
+                         "SELECT line_no, byte_offset, end_byte_offset, parameters, complete "
+                                 + "FROM entries ORDER BY line_no")) {
+                int i = 0;
+                long expectedStart = 0;
+                while (rs.next()) {
+                    long blockBytes = 0;
+                    for (int k = 0; k < 4; k++) {
+                        blockBytes += all.get(i * 4 + k).getBytes(StandardCharsets.UTF_8).length
+                                + System.lineSeparator().length();
+                    }
+                    assertEquals(i * 4 + 1, rs.getLong(1));
+                    assertEquals(expectedStart, rs.getLong(2));
+                    // 自分のスレッドのエラー行とスタックトレースまでを含み、次の Preparing で止まる
+                    assertEquals(expectedStart + blockBytes, rs.getLong(3));
+                    assertEquals(i + "(Integer)", rs.getString(4));
+                    assertEquals(0, rs.getInt(5));
+                    expectedStart += blockBytes;
+                    i++;
+                }
+                assertEquals(50, i);
+            }
+        }
+    }
+
     private static List<String> lines(String... lines) {
         return Arrays.asList(lines);
     }

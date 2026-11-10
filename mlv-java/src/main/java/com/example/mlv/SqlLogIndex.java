@@ -1,5 +1,10 @@
 package com.example.mlv;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.io.BufferedInputStream;
 import java.io.Closeable;
 import java.io.RandomAccessFile;
@@ -16,6 +21,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -589,120 +595,45 @@ public final class SqlLogIndex {
         }
     }
 
+    /**
+     * サンプルを JSON にする。手書きの文字列操作ではなく Gson に任せる。
+     * 以前の手書きの読み取りは最初の <code>}</code> をオブジェクトの終わりとみなしていたので、
+     * 行の中に <code>}</code> があるとプレビューがそこで切れ、<code>{</code> が続くと
+     * 実在しないサンプルが増えていた。書き出す形（キーの名前と並び）は以前と同じ。
+     */
     private static String serializeSkippedSamples(List<SkippedLine> samples) {
-        StringBuilder sb = new StringBuilder();
-        sb.append('[');
-        for (int i = 0; i < samples.size(); i++) {
-            if (i > 0) {
-                sb.append(',');
-            }
-            SkippedLine s = samples.get(i);
-            sb.append("{\"file_id\":").append(s.fileId)
-                    .append(",\"line_no\":").append(s.lineNo)
-                    .append(",\"preview\":").append(jsonString(s.preview)).append('}');
+        JsonArray array = new JsonArray();
+        for (SkippedLine s : samples) {
+            JsonObject o = new JsonObject();
+            o.addProperty("file_id", s.fileId);
+            o.addProperty("line_no", s.lineNo);
+            o.addProperty("preview", s.preview);
+            array.add(o);
         }
-        sb.append(']');
-        return sb.toString();
+        return array.toString();
     }
 
+    /**
+     * {@link #serializeSkippedSamples} の逆。読めなければ空を返す ―― サンプルは
+     * 読み飛ばしの手がかりとして画面に出すだけなので、壊れていても読み込みは止めない
+     * （件数は別のキーに持っている）。
+     */
     private static List<SkippedLine> deserializeSkippedSamples(String json) {
         List<SkippedLine> out = new ArrayList<>();
-        int i = 0;
-        while (i < json.length()) {
-            int objStart = json.indexOf('{', i);
-            if (objStart < 0) {
-                break;
+        try {
+            JsonElement parsed = JsonParser.parseString(json);
+            if (!parsed.isJsonArray()) {
+                return out;
             }
-            int objEnd = json.indexOf('}', objStart);
-            if (objEnd < 0) {
-                break;
+            for (JsonElement element : parsed.getAsJsonArray()) {
+                JsonObject o = element.getAsJsonObject();
+                out.add(new SkippedLine(o.get("file_id").getAsLong(), o.get("line_no").getAsLong(),
+                        o.get("preview").getAsString()));
             }
-            String obj = json.substring(objStart + 1, objEnd);
-            long fileId = extractJsonLong(obj, "file_id");
-            long lineNo = extractJsonLong(obj, "line_no");
-            String preview = extractJsonString(obj, "preview");
-            out.add(new SkippedLine(fileId, lineNo, preview));
-            i = objEnd + 1;
+        } catch (RuntimeException e) {
+            return new ArrayList<>();
         }
         return out;
-    }
-
-    private static long extractJsonLong(String obj, String key) {
-        String needle = "\"" + key + "\":";
-        int idx = obj.indexOf(needle);
-        if (idx < 0) {
-            return 0L;
-        }
-        int start = idx + needle.length();
-        int end = start;
-        while (end < obj.length() && Character.isDigit(obj.charAt(end))) {
-            end++;
-        }
-        return Long.parseLong(obj.substring(start, end));
-    }
-
-    private static String extractJsonString(String obj, String key) {
-        String needle = "\"" + key + "\":\"";
-        int idx = obj.indexOf(needle);
-        if (idx < 0) {
-            return "";
-        }
-        int start = idx + needle.length();
-        StringBuilder sb = new StringBuilder();
-        for (int j = start; j < obj.length(); j++) {
-            char c = obj.charAt(j);
-            if (c == '\\' && j + 1 < obj.length()) {
-                char next = obj.charAt(j + 1);
-                if (next == 'n') {
-                    sb.append('\n');
-                } else if (next == 'r') {
-                    sb.append('\r');
-                } else if (next == 't') {
-                    sb.append('\t');
-                } else if (next == '\\' || next == '"') {
-                    sb.append(next);
-                } else {
-                    sb.append(next);
-                }
-                j++;
-                continue;
-            }
-            if (c == '"') {
-                break;
-            }
-            sb.append(c);
-        }
-        return sb.toString();
-    }
-
-    private static String jsonString(String value) {
-        StringBuilder sb = new StringBuilder();
-        sb.append('"');
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\':
-                    sb.append("\\\\");
-                    break;
-                case '"':
-                    sb.append("\\\"");
-                    break;
-                case '\n':
-                    sb.append("\\n");
-                    break;
-                case '\r':
-                    sb.append("\\r");
-                    break;
-                case '\t':
-                    sb.append("\\t");
-                    break;
-                default:
-                    sb.append(c);
-                    break;
-            }
-        }
-        sb.append('"');
-        return sb.toString();
     }
 
     private static void parseFileInto(long fileId, Path path, BlockingQueue<List<Row>> queue,
@@ -720,6 +651,27 @@ public final class SqlLogIndex {
              ByteLineReader reader = new ByteLineReader(in)) {
             long lineNo = 0;
             Map<String, SqlBlock> pendingBlocks = new LinkedHashMap<>();
+            // 以下の 3 つは、1 行ごとに pendingBlocks の全件を走査しないための手がかり。
+            // Total / Updates が来ないブロック（CALL や例外で終わった SQL）は、同じスレッドと
+            // mapper の組が次に Preparing を出すまで残る。スレッド名が使い回されないログ
+            // （task-1, task-2, …）ではそれが溜まり続け、全件走査だと取り込みが行数の 2 乗になる。
+            // 実測（1 ブロック 3 行の合成ログ・1 ファイル・8 万ブロック、メモリ上の DB への
+            // 索引構築、Linux / JDK 21、変更前後を交互に 1 回ずつ別の JVM で測った中央値）:
+            // どのブロックも完了せずスレッド名が毎回別のログで 157,015ms → 1,251ms（各 3 回）。
+            // 完了するブロックだけのログは 740ms → 678ms（各 15 回。変更前 616〜928ms、
+            // 変更後 587〜931ms で範囲が重なるので、差はない）。
+            // 索引の中身は、合成ログ 12 種（スレッド 1〜200 本、mapper 1〜20 個、使い回されない
+            // スレッド名、CRLF を含む）とサンプルログで、変更前と全列が一致することを確かめた。
+            //
+            // スレッドごとの未完了ブロック（継続行でない行が来たスレッドのブロックだけを触る）
+            Map<String, List<SqlBlock>> openByThread = new HashMap<>();
+            // 直近に始めたブロック。Preparing のたびに未完了ブロックすべてへ上限を付けるので、
+            // まだ上限が付いていないのは、前回の Preparing で始めたこの 1 つだけになる
+            SqlBlock lastStarted = null;
+            // 直近の「継続行でないヘッダ行」のスレッド。captureTail が効くのはこのスレッドの
+            // ブロックだけ（他のスレッドのブロックに残った captureTail は、そのスレッドが
+            // 次に選ばれるときに必ず書き直されるので見ない）
+            String tailThread = null;
             List<Row> batch = new ArrayList<>(BATCH_SIZE);
 
             while (reader.next()) {
@@ -750,15 +702,26 @@ public final class SqlLogIndex {
                 }
 
                 if (parsed != null && MyBatisBlockParser.isPreparingLine(parsed)) {
-                    MyBatisBlockParser.capIncompleteBlocksAt(pendingBlocks.values(), reader.lineStart);
+                    if (lastStarted != null) {
+                        MyBatisBlockParser.capIncompleteBlocksAt(
+                                Collections.singletonList(lastStarted), reader.lineStart);
+                    }
                     String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
                     SqlBlock existing = pendingBlocks.remove(key);
                     if (existing != null) {
+                        removeOpenBlock(openByThread, existing);
                         batch = flushBlock(existing, reader.lineStart, batch, queue);
                     }
                     SqlBlock block = MyBatisBlockParser.startBlock(fileId, lineNo, reader.lineStart, parsed);
                     MyBatisBlockParser.noteRawLineEnd(block, reader.position());
                     pendingBlocks.put(key, block);
+                    List<SqlBlock> sameThread = openByThread.get(block.thread);
+                    if (sameThread == null) {
+                        sameThread = new ArrayList<>(2);
+                        openByThread.put(block.thread, sameThread);
+                    }
+                    sameThread.add(block);
+                    lastStarted = block;
                 } else if (parsed != null) {
                     String key = MyBatisBlockParser.blockKey(parsed.thread, parsed.logger);
                     SqlBlock pending = pendingBlocks.get(key);
@@ -769,28 +732,31 @@ public final class SqlLogIndex {
                         pending.captureTail = false;
                         if (MyBatisBlockParser.isBlockEnd(parsed)) {
                             pendingBlocks.remove(key);
+                            removeOpenBlock(openByThread, pending);
                             batch = flushBlock(pending, reader.position(), batch, queue);
                         }
                     } else {
-                        for (SqlBlock open : pendingBlocks.values()) {
-                            if (parsed.thread.equals(open.thread)) {
+                        // このスレッドのブロックだけが、続くスタックトレースを raw に含める
+                        tailThread = parsed.thread;
+                        List<SqlBlock> sameThread = openByThread.get(tailThread);
+                        if (sameThread != null) {
+                            for (SqlBlock open : sameThread) {
                                 MyBatisBlockParser.noteRawLineEnd(open, reader.position());
                                 open.captureTail = true;
-                            } else {
-                                open.captureTail = false;
                             }
                         }
                     }
                 } else if (!header) {
-                    for (SqlBlock open : pendingBlocks.values()) {
-                        if (open.captureTail) {
-                            MyBatisBlockParser.noteRawLineEnd(open, reader.position());
+                    List<SqlBlock> tail = tailThread != null ? openByThread.get(tailThread) : null;
+                    if (tail != null) {
+                        for (SqlBlock open : tail) {
+                            if (open.captureTail) {
+                                MyBatisBlockParser.noteRawLineEnd(open, reader.position());
+                            }
                         }
                     }
                 } else if (header) {
-                    for (SqlBlock open : pendingBlocks.values()) {
-                        open.captureTail = false;
-                    }
+                    tailThread = null;
                     skippedCounter.incrementAndGet();
                     if (skippedSamples.size() < MAX_SKIPPED_SAMPLES) {
                         skippedSamples.add(new SkippedLine(fileId, lineNo,
@@ -804,6 +770,17 @@ public final class SqlLogIndex {
             }
             if (!batch.isEmpty()) {
                 queue.put(batch);
+            }
+        }
+    }
+
+    /** スレッドごとの未完了ブロックの一覧から 1 つ外す（空になったスレッドは一覧ごと消す）。 */
+    private static void removeOpenBlock(Map<String, List<SqlBlock>> openByThread, SqlBlock block) {
+        List<SqlBlock> sameThread = openByThread.get(block.thread);
+        if (sameThread != null) {
+            sameThread.remove(block);
+            if (sameThread.isEmpty()) {
+                openByThread.remove(block.thread);
             }
         }
     }

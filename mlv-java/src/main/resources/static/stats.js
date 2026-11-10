@@ -25,7 +25,7 @@ async function refreshStats() {
       return;
     }
     if (summary.error) {
-      statsEls.summary.innerHTML = `<p class="stats-loading">${summary.error}</p>`;
+      statsEls.summary.innerHTML = `<p class="stats-loading">${escapeHtml(summary.error)}</p>`;
       return;
     }
 
